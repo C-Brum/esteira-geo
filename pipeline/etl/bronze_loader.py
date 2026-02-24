@@ -137,8 +137,8 @@ def create_citizens_geoparquet():
 
 
 def save_to_geoparquet(gdf, filename):
-    """Salva GeoDataFrame como GeoParquet"""
-    filepath = f"{SAMPLE_DATA_DIR}/{filename}"
+    """Salva GeoDataFrame como GeoParquet na camada Bronze"""
+    filepath = f"{LOCAL_BRONZE_PATH}/{filename}"
     gdf.to_parquet(filepath)
     logger.info(f"✓ Salvo: {filepath}")
     return filepath

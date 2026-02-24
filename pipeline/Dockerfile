@@ -28,8 +28,8 @@ COPY pipeline/*.py ./
 COPY pipeline/etl ./etl
 
 # Criar diretórios para dados e logs
-RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs && \
-    chmod -R 755 /app/logs
+RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs /app/data && \
+    chmod -R 755 /app/logs /app/data
 
 # Def user para rodar pipeline
 RUN useradd -m -u 1000 esteira && \
