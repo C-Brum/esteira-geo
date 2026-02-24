@@ -1,0 +1,67 @@
+graph LR
+    subgraph input["📥 Input Data"]
+        flooding["3 Flood Areas<br/>Polygons<br/>Porto Alegre"]
+        citizens["100 Citizens<br/>Point Features<br/>Coordinates"]
+    end
+    
+    subgraph bronze_layer["🟤 BRONZE Layer<br/>Raw Data Storage"]
+        bronze_dir["S3/OBS/Local<br/>flooding_areas.parquet<br/>citizens.parquet"]
+        bronze_meta["Metadata:<br/>EPSG:4326<br/>3,100 records<br/>Timestamp"]
+    end
+    
+    subgraph silver_layer["⚪ SILVER Layer<br/>Normalized Data"]
+        silver_dir["S3/OBS/Local<br/>flooding_areas.parquet<br/>citizens.parquet"]
+        silver_checks["Quality Checks:<br/>✓ Remove duplicates<br/>✓ Validate geometries<br/>✓ Standardize types<br/>✓ Parse dates"]
+        silver_meta["Schema:<br/>area_id: int64<br/>flood_date: datetime<br/>data_quality_score"]
+    end
+    
+    subgraph gold_layer["🟡 GOLD Layer<br/>Processed & Analyzed"]
+        spatial_join["🎯 Spatial Join<br/>ST_Contains<br/>citizen point within<br/>flood polygon"]
+        affected["60 Affected<br/>Citizens<br/>Identified by<br/>flood area"]
+        unaffected["40 Unaffected<br/>Citizens<br/>Safe zones"]
+        summary["100 Total<br/>Citizens<br/>Summary info"]
+    end
+    
+    subgraph postgis["🗺️ PostGIS<br/>Spatial Database"]
+        tables["Tables:<br/>flooding_areas<br/>citizens<br/>GIST indexes<br/>GEOMETRY(POINT,4326)<br/>GEOMETRY(POLYGON,4326)"]
+        queries["Queries:<br/>ST_Contains()<br/>ST_Distance()<br/>ST_Buffer()<br/>ST_Intersects()"]
+        views["Views:<br/>v_citizens_summary<br/>Statistics<br/>Reports"]
+    end
+    
+    subgraph visualization["🌐 Flask Dashboard"]
+        dashboard["Web UI<br/>./index.html<br/>Real-time cards"]
+        apis["REST APIs:<br/>/api/geometries<br/>/api/stats<br/>/health"]
+        maps["Map Layers:<br/>Flood areas<br/>Citizens location<br/>Risk zones"]
+    end
+    
+    input -->|load_sample_data| bronze_dir
+    flooding -->|3 records| bronze_meta
+    citizens -->|100 records| bronze_meta
+    
+    bronze_dir -->|read| silver_checks
+    silver_checks -->|validate| silver_dir
+    silver_meta -->|metadata| silver_dir
+    
+    silver_dir -->|read normalized| spatial_join
+    spatial_join -->|✓ within| affected
+    spatial_join -->|✗ outside| unaffected
+    affected -->|write| gold_layer
+    unaffected -->|write| gold_layer
+    summary -->|aggregated| gold_layer
+    
+    gold_layer -->|ST_GeomFromText| postgis
+    postgis -->|INSERT geometries| tables
+    postgis -->|create GIST| tables
+    tables -->|SELECT queries| queries
+    queries -->|aggregate| views
+    
+    views -->|fetch data| apis
+    apis -->|display| dashboard
+    apis -->|render| maps
+    
+    style input fill:#FF6B6B,stroke:#000,color:#fff
+    style bronze_layer fill:#8B6F47,stroke:#000,color:#fff
+    style silver_layer fill:#D3D3D3,stroke:#000,color:#000
+    style gold_layer fill:#FFD700,stroke:#000,color:#000
+    style postgis fill:#336791,stroke:#000,color:#fff
+    style visualization fill:#4CAF50,stroke:#000,color:#fff

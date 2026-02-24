@@ -1,0 +1,83 @@
+graph TB
+    subgraph host["🖥️ Host Machine<br/>Linux/macOS/Windows"]
+        scripts["📜 Scripts<br/>docker.sh<br/>debug.sh<br/>setup.sh"]
+        compose["🐳 Docker Compose"]
+        make["⚙️ Makefile"]
+    end
+    
+    subgraph docker_network["🌐 Docker Network: esteira-network"]
+        
+        subgraph postgis_service["PostgreSQL + PostGIS"]
+            db["🗄️ PostgreSQL 13<br/>Database: esteira_geo<br/>User: esteira_user"]
+            postgis_ext["PostGIS Extension<br/>Spatial Indexes<br/>GIST Indexes"]
+            db_health["Health Check<br/>pg_isready"]
+        end
+        
+        subgraph minio_service["MinIO (S3 Compatible)"]
+            minio["📦 MinIO Server<br/>Port: 9000<br/>Creds: minioadmin"]
+            minio_console["🖥️ MinIO Console<br/>Port: 9001<br/>UI para buckets"]
+            minio_init["🔧 Bucket Init<br/>Creates:<br/>bronze, silver, gold"]
+        end
+        
+        subgraph pipeline_service["Pipeline ETL"]
+            pipeline_container["🐳 Pipeline Container<br/>Python 3.9<br/>GDAL, GeoPandas<br/>Rasterio, Fiona"]
+            
+            subgraph etl_flow["ETL Pipeline Flow"]
+                bronze_loader["Bronze Loader<br/>Generate Sample Data<br/>3 flood areas<br/>+ 100 citizens"]
+                silver_proc["Silver Processor<br/>Normalize & Validate<br/>Geometry checks<br/>Type standardization"]
+                gold_proc["Gold Processor<br/>Spatial Join<br/>Identify affected<br/>citizens"]
+                postgis_loader["PostGIS Loader<br/>Insert geometries<br/>Create indexes<br/>Statistics"]
+            end
+            
+            bronze_loader -->|GeoParquet| silver_proc
+            silver_proc -->|GeoParquet| gold_proc
+            gold_proc -->|GeoParquet| postgis_loader
+            postgis_loader -->|ST_GeomFromText| db
+        end
+        
+        subgraph flask_service["Flask Web App"]
+            flask["🌐 Flask Server<br/>Port: 5000<br/>Development Mode"]
+            gunicorn["⚙️ Gunicorn<br/>4 Workers<br/>Production Ready"]
+            nginx["🔀 Nginx<br/>Reverse Proxy<br/>Port: 80"]
+            
+            flask -->|WSGI| gunicorn
+            gunicorn -->|HTTP| nginx
+        end
+        
+        subgraph volumes["📁 Docker Volumes"]
+            vol_postgres["postgres_data<br/>Database files"]
+            vol_bronze["pipeline_bronze<br/>Raw GeoParquet"]
+            vol_silver["pipeline_silver<br/>Normalized data"]
+            vol_gold["pipeline_gold<br/>Processed data"]
+            vol_minio["minio_data<br/>S3 storage"]
+        end
+    end
+    
+    host -->|docker-compose up| docker_network
+    host -->|docker-compose exec| pipeline_service
+    host -->|curl / browser| flask_service
+    
+    minio -->|upload bronze| vol_bronze
+    vol_bronze -->|read| bronze_loader
+    bronze_loader -->|write| vol_bronze
+    vol_silver -->|store| silver_proc
+    vol_gold -->|store| gold_proc
+    vol_gold -->|read| flask_service
+    
+    postgis_loader -->|persist| vol_postgres
+    flask_service -->|query| db
+    
+    pipeline_container -->|check health| minio
+    flask_service -->|list buckets| minio_console
+    
+    db -->|health| db_health
+    minio -->|health| minio_init
+    
+    style host fill:#2196F3,stroke:#000,color:#fff
+    style docker_network fill:#4CAF50,stroke:#000,color:#fff
+    style postgis_service fill:#336791,stroke:#000,color:#fff
+    style minio_service fill:#C41E3A,stroke:#000,color:#fff
+    style pipeline_service fill:#F37021,stroke:#000,color:#fff
+    style flask_service fill:#013243,stroke:#000,color:#fff
+    style volumes fill:#9C27B0,stroke:#000,color:#fff
+    style etl_flow fill:#FFC107,stroke:#000,color:#000

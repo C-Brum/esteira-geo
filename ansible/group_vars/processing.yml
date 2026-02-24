@@ -1,0 +1,32 @@
+# Variáveis específicas para VM de processamento
+---
+processing_user: esteira
+processing_home: /home/esteira
+processing_app_dir: "{{ processing_home }}/esteira-geo"
+
+# Dependências geoespaciais
+geo_packages:
+  - python3-dev
+  - python3-pip
+  - python3-venv
+  - gdal-bin
+  - libgdal-dev
+  - libgeos-dev
+  - libproj-dev
+  - postgresql-client
+
+# Pacotes Python para processamento
+processing_pip_packages:
+  - geopandas
+  - rasterio
+  - fiona
+  - shapely
+  - pyproj
+  - psycopg2-binary
+  - boto3
+  - python-dotenv
+  - pandas
+  - numpy
+
+# Schedule para executar pipeline (crontab)
+pipeline_schedule: "0 2 * * *"  # Executa diariamente às 2:00 AM

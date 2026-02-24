@@ -1,0 +1,17 @@
+[program:{{ supervisor_program_name }}]
+command={{ presentation_app_dir }}/venv/bin/gunicorn \
+    --workers {{ gunicorn_workers }} \
+    --threads {{ gunicorn_threads }} \
+    --worker-class {{ gunicorn_worker_class }} \
+    --bind 127.0.0.1:{{ flask_port | default(5000) }} \
+    --access-logfile {{ presentation_app_dir }}/logs/gunicorn-access.log \
+    --error-logfile {{ presentation_app_dir }}/logs/gunicorn-error.log \
+    app:app
+
+directory={{ presentation_app_dir }}
+user={{ presentation_user }}
+autostart=true
+autorestart=true
+redirect_stderr=true
+startsecs=10
+stopwaitsecs=10

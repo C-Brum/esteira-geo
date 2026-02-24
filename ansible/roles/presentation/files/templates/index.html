@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Esteira Geo - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 40px;
+        }
+
+        .card {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            transform: translateY(-5px);
+        }
+
+        .card h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+        }
+
+        .card p {
+            color: #666;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .status-ok {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .api-section {
+            padding: 20px 40px;
+            background: #f8f9fa;
+            border-top: 1px solid #ddd;
+        }
+
+        .api-section h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .endpoint {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            border-left: 3px solid #667eea;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .endpoint.get {
+            border-left-color: #28a745;
+        }
+
+        .endpoint code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        footer {
+            background: #333;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            font-size: 0.9em;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #667eea;
+            animation: pulse 1s infinite;
+            margin-right: 5px;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 Esteira Geo</h1>
+            <p>Plataforma de Processamento de Dados Geográficos</p>
+        </header>
+
+        <div class="content">
+            <div class="card">
+                <h3>📊 Status do Sistema</h3>
+                <p id="health-status">
+                    <span class="loading"></span>Carregando...
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🗄️ Banco de Dados</h3>
+                <p id="db-status">
+                    <span class="loading"></span>Carregando...
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>☁️ Buckets de Dados</h3>
+                <p id="buckets-info">
+                    <span class="loading"></span>Carregando...
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>📍 Estatísticas</h3>
+                <p id="stats-info">
+                    <span class="loading"></span>Carregando...
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🗺️ Geometrias</h3>
+                <p id="geometries-count">
+                    <span class="loading"></span>Carregando...
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🏗️ Arquitetura</h3>
+                <p>
+                    <strong>Padrão Medallion:</strong><br>
+                    Bronze → Silver → Gold<br><br>
+                    <strong>Componentes:</strong><br>
+                    • Processamento (Python)<br>
+                    • Banco de Dados (PostGIS)<br>
+                    • Armazenamento (Buckets)<br>
+                    • Apresentação (Flask)
+                </p>
+            </div>
+        </div>
+
+        <div class="api-section">
+            <h2>📡 API Endpoints</h2>
+            <div class="endpoint get">
+                <code>GET /api/health</code> - Health check do sistema
+            </div>
+            <div class="endpoint get">
+                <code>GET /api/db-status</code> - Status da conexão com banco de dados
+            </div>
+            <div class="endpoint get">
+                <code>GET /api/buckets</code> - Informações dos buckets
+            </div>
+            <div class="endpoint get">
+                <code>GET /api/geometries</code> - Lista geometrias do PostGIS
+            </div>
+            <div class="endpoint get">
+                <code>GET /api/stats</code> - Estatísticas de dados
+            </div>
+        </div>
+
+        <footer>
+            <p>© 2025 Esteira Geo - Processamento de Dados Geográficos</p>
+        </footer>
+    </div>
+
+    <script>
+        // Fetch health status
+        fetch('/api/health')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('health-status').innerHTML = `
+                    <span class="status-badge status-ok">✓ Online</span>
+                    <p>Serviço operacional</p>
+                `;
+            })
+            .catch(e => {
+                document.getElementById('health-status').innerHTML = `
+                    <span class="status-badge status-error">✗ Offline</span>
+                    <p>Erro ao conectar</p>
+                `;
+            });
+
+        // Fetch database status
+        fetch('/api/db-status')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'connected') {
+                    document.getElementById('db-status').innerHTML = `
+                        <span class="status-badge status-ok">✓ Conectado</span>
+                        <p>Database: <strong>${data.database}</strong></p>
+                    `;
+                } else {
+                    throw new Error('Not connected');
+                }
+            })
+            .catch(e => {
+                document.getElementById('db-status').innerHTML = `
+                    <span class="status-badge status-error">✗ Desconectado</span>
+                    <p>Erro na conexão com RDS</p>
+                `;
+            });
+
+        // Fetch buckets info
+        fetch('/api/buckets')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('buckets-info').innerHTML = `
+                    <strong>Gold:</strong> ${data.gold_bucket}<br>
+                    <strong>Silver:</strong> ${data.silver_bucket}<br>
+                    <strong>Arquitetura:</strong> ${data.architecture}
+                `;
+            })
+            .catch(e => {
+                document.getElementById('buckets-info').innerHTML = `
+                    <span class="status-badge status-error">Erro ao carregar</span>
+                `;
+            });
+
+        // Fetch statistics
+        fetch('/api/stats')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('stats-info').innerHTML = `
+                    <strong>Total de Feições:</strong> ${data.total_features}<br>
+                    <strong>Bounding Box:</strong> Carregado
+                `;
+            })
+            .catch(e => {
+                document.getElementById('stats-info').innerHTML = `
+                    <span class="status-badge status-error">Aguardando dados...</span>
+                `;
+            });
+
+        // Fetch geometries count
+        fetch('/api/geometries')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('geometries-count').innerHTML = `
+                    <strong>Feições Carregadas:</strong> ${data.count}<br>
+                    <small>Primeiras 100 registros</small>
+                `;
+            })
+            .catch(e => {
+                document.getElementById('geometries-count').innerHTML = `
+                    <span class="status-badge status-error">Nenhuma dado ainda</span>
+                `;
+            });
+    </script>
+</body>
+</html>

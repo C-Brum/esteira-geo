@@ -1,0 +1,37 @@
+# Variáveis específicas para VM de apresentação
+---
+presentation_user: webapp
+presentation_home: /home/webapp
+presentation_app_dir: "{{ presentation_home }}/esteira-geo"
+
+# Dependências web
+web_packages:
+  - python3-dev
+  - python3-pip
+  - python3-venv
+  - nginx
+  - postgresql-client
+  - git
+  - supervisor
+
+# Pacotes Python para Flask
+presentation_pip_packages:
+  - flask
+  - psycopg2-binary
+  - boto3
+  - python-dotenv
+  - gunicorn
+  - flask-cors
+  - geopandas
+  - shapely
+  - pandas
+
+# Configuração Nginx
+nginx_server_name: "esteira-geo.local"
+nginx_upstream_server: "127.0.0.1:{{ flask_port | default(5000) }}"
+
+# Configuração Supervisor para Gunicorn
+supervisor_program_name: "esteira_geo_flask"
+gunicorn_workers: 4
+gunicorn_threads: 2
+gunicorn_worker_class: "sync"

@@ -1,0 +1,35 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.idea/
+.vscode/
+.DS_Store
+
+# Docker & Volumes
+.docker/
+postgres_data/
+minio_data/
+pipeline_bronze/
+pipeline_silver/
+pipeline_gold/
+docker-compose.override.yml
+
+# Logs
+logs/
+*.log
+
+# Data & Generated files
+data/
+pipeline/data/
+*.parquet
+*.pickle
+
+# Ansible
+*.retry

@@ -1,0 +1,30 @@
+---
+- name: Configure Processing VM
+  hosts: processing
+  become: yes
+  
+  roles:
+    - common
+    - processing
+
+  post_tasks:
+    - name: Display processing VM configuration summary
+      debug:
+        msg: |
+          Processing VM configured successfully!
+          
+          User: {{ processing_user }}
+          Home: {{ processing_home }}
+          App Dir: {{ processing_app_dir }}
+          
+          Configured packages:
+          - Python geospatial libraries (geopandas, rasterio, fiona, etc.)
+          - Database client (psycopg2)
+          - Cloud storage (boto3)
+          
+          Pipeline scheduled to run at: {{ pipeline_schedule }}
+          
+          Next steps:
+          1. Copy your processing scripts to {{ processing_app_dir }}/
+          2. Test the pipeline manually before relying on cron
+          3. Configure AWS/S3 credentials on the VM

@@ -1,0 +1,372 @@
+# TESTES E VALIDAÇÃO - Esteira Geo
+# Caso de Uso: Batimento Geográfico de Enchentes em Porto Alegre
+
+## ============================================================================
+## SETUP INICIAL
+## ============================================================================
+
+# 1. Instalar dependências
+cd pipeline
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 2. Criar diretórios necessários
+mkdir -p data logs
+
+# 3. Verificar conexão com banco de dados (PostGIS)
+psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo -c "SELECT version();"
+
+## ============================================================================
+## TESTES UNITÁRIOS - BRONZE LAYER
+## ============================================================================
+
+# Teste 1: Criar dados de enchente
+python -c "
+from etl.bronze_loader import create_flooding_areas_geoparquet
+gdf = create_flooding_areas_geoparquet()
+print(f'✓ Áreas criadas: {len(gdf)}')
+print(f'  CRS: {gdf.crs}')
+print(f'  Colunas: {list(gdf.columns)}')
+print(gdf.head())
+"
+
+# Teste 2: Criar dados de cidadãos
+python -c "
+from etl.bronze_loader import create_citizens_geoparquet
+gdf = create_citizens_geoparquet()
+print(f'✓ Cidadãos criados: {len(gdf)}')
+print(f'  CRS: {gdf.crs}')
+print(f'  Colunas: {list(gdf.columns)}')
+print(gdf.head())
+"
+
+# Teste 3: Salvar como GeoParquet
+python -c "
+from etl.bronze_loader import create_flooding_areas_geoparquet, save_to_geoparquet
+import os
+os.makedirs('data', exist_ok=True)
+gdf = create_flooding_areas_geoparquet()
+path = save_to_geoparquet(gdf, 'flooding_areas_porto_alegre.parquet')
+print(f'✓ Arquivo salvo: {path}')
+"
+
+# Teste 4: Carregamento bronze completo
+python etl/bronze_loader.py
+
+## ============================================================================
+## TESTES UNITÁRIOS - SILVER LAYER
+## ============================================================================
+
+# Teste 5: Carregar dados do bronze
+python -c "
+from etl.silver_processor import load_from_bronze
+gdf = load_from_bronze('flooding_areas_porto_alegre.parquet')
+print(f'✓ Carregado: {len(gdf)} registros')
+print(f'  Geometrias válidas: {gdf.geometry.is_valid.sum()}/{len(gdf)}')
+"
+
+# Teste 6: Normalizar áreas de enchente
+python -c "
+from etl.silver_processor import load_from_bronze, normalize_flooding_areas
+gdf = load_from_bronze('flooding_areas_porto_alegre.parquet')
+normalized = normalize_flooding_areas(gdf)
+print(f'✓ Normalizado: {len(normalized)} áreas')
+print(f'  Colunas: {list(normalized.columns)}')
+print(normalized.dtypes)
+"
+
+# Teste 7: Normalizar dados de cidadãos
+python -c "
+from etl.silver_processor import load_from_bronze, normalize_citizens
+gdf = load_from_bronze('citizens_data.parquet')
+normalized = normalize_citizens(gdf)
+print(f'✓ Normalizado: {len(normalized)} cidadãos')
+print(f'  Geometrias válidas: {normalized.geometry.is_valid.sum()}/{len(normalized)}')
+"
+
+# Teste 8: Processamento silver completo
+python etl/silver_processor.py
+
+## ============================================================================
+## TESTES UNITÁRIOS - GOLD LAYER
+## ============================================================================
+
+# Teste 9: Carregamento silver
+python -c "
+from etl.gold_processor import load_from_silver
+flooding = load_from_silver('silver_flooding_areas_porto_alegre.parquet')
+citizens = load_from_silver('silver_citizens_data.parquet')
+print(f'✓ Flooding: {len(flooding)} áreas')
+print(f'✓ Citizens: {len(citizens)} cidadãos')
+"
+
+# Teste 10: Spatial join
+python -c "
+from etl.gold_processor import load_from_silver, perform_spatial_join
+flooding = load_from_silver('silver_flooding_areas_porto_alegre.parquet')
+citizens = load_from_silver('silver_citizens_data.parquet')
+result = perform_spatial_join(flooding, citizens)
+affected_count = result['index_right'].notna().sum()
+print(f'✓ Spatial join: {len(result)} registros')
+print(f'  Cidadãos em área de enchente: {affected_count}')
+"
+
+# Teste 11: Classificação
+python -c "
+from etl.gold_processor import load_from_silver, perform_spatial_join, classify_citizens
+flooding = load_from_silver('silver_flooding_areas_porto_alegre.parquet')
+citizens = load_from_silver('silver_citizens_data.parquet')
+joined = perform_spatial_join(flooding, citizens)
+classified = classify_citizens(joined, flooding)
+print(f'✓ Classificado: {len(classified)} cidadãos')
+print(f'  Afetados: {classified[\"affected_by_flooding\"].sum()}')
+print(f'  Não afetados: {(~classified[\"affected_by_flooding\"]).sum()}')
+"
+
+# Teste 12: Processamento gold completo
+python etl/gold_processor.py
+
+## ============================================================================
+## TESTES UNITÁRIOS - POSTGIS LAYER
+## ============================================================================
+
+# Teste 13: Verificar conexão PostgreSQL
+python -c "
+from etl.postgis_loader import get_db_connection
+conn = get_db_connection()
+if conn:
+    print('✓ Conexão PostgreSQL OK')
+    conn.close()
+else:
+    print('✗ Falha na conexão PostgreSQL')
+"
+
+# Teste 14: Criar tabelas
+python -c "
+from etl.postgis_loader import get_db_connection, create_tables
+conn = get_db_connection()
+if conn:
+    create_tables(conn)
+    print('✓ Tabelas criadas')
+    conn.close()
+"
+
+# Teste 15: Carregar dados no PostGIS
+python -c "
+from etl.postgis_loader import load_to_postgis
+success = load_to_postgis()
+if success:
+    print('✓ PostGIS carregado com sucesso')
+else:
+    print('✗ Falha ao carregar PostGIS')
+"
+
+## ============================================================================
+## TESTE INTEGRADO - PIPELINE COMPLETO
+## ============================================================================
+
+# Teste 16: Executar pipeline completo
+python main.py
+
+# Verificar logs
+tail -f logs/pipeline.log
+
+## ============================================================================
+## VALIDAÇÃO DE DADOS - BRONZE
+## ============================================================================
+
+# Validação 1: Verificar arquivos bronze
+python -c "
+import os
+import geopandas as gpd
+
+files = ['data/flooding_areas_porto_alegre.parquet', 'data/citizens_data.parquet']
+for f in files:
+    if os.path.exists(f):
+        gdf = gpd.read_parquet(f)
+        print(f'✓ {f}')
+        print(f'  Records: {len(gdf)}')
+        print(f'  CRS: {gdf.crs}')
+        print(f'  Valid geometries: {gdf.geometry.is_valid.sum()}/{len(gdf)}')
+    else:
+        print(f'✗ {f} not found')
+"
+
+# Validação 2: Distribuição espacial
+python -c "
+import geopandas as gpd
+flooding = gpd.read_parquet('data/flooding_areas_porto_alegre.parquet')
+citizens = gpd.read_parquet('data/citizens_data.parquet')
+
+print('=== FLOODING AREAS ===')
+print(flooding[['area_name', 'severity', 'affected_population']].to_string())
+
+print('\n=== CITIZENS SAMPLE ===')
+print(citizens[['citizen_id', 'name', 'address']].head(10).to_string())
+"
+
+## ============================================================================
+## VALIDAÇÃO DE DADOS - SILVER
+## ============================================================================
+
+# Validação 3: Verificar dados normalizados
+python -c "
+import geopandas as gpd
+import os
+
+files = ['data/silver_flooding_areas_porto_alegre.parquet', 'data/silver_citizens_data.parquet']
+for f in files:
+    if os.path.exists(f):
+        gdf = gpd.read_parquet(f)
+        print(f'✓ {f}')
+        print(f'  Dtypes: {gdf.dtypes}')
+        print(f'  Data quality score: {gdf[\"data_quality_score\"].mean()}')
+    else:
+        print(f'✗ {f} not found')
+"
+
+## ============================================================================
+## VALIDAÇÃO DE DADOS - GOLD
+## ============================================================================
+
+# Validação 4: Verificar resultados de batimento
+python -c "
+import geopandas as gpd
+import os
+
+affected_file = 'data/affected_citizens.parquet'
+unaffected_file = 'data/unaffected_citizens.parquet'
+all_file = 'data/all_citizens_evaluated.parquet'
+
+if os.path.exists(affected_file):
+    affected = gpd.read_parquet(affected_file)
+    print(f'✓ {affected_file}')
+    print(f'  Cidadãos afetados: {len(affected)}')
+    print(f'  Colunas: {list(affected.columns)}')
+
+if os.path.exists(unaffected_file):
+    unaffected = gpd.read_parquet(unaffected_file)
+    print(f'✓ {unaffected_file}')
+    print(f'  Cidadãos não afetados: {len(unaffected)}')
+
+if os.path.exists(all_file):
+    all_data = gpd.read_parquet(all_file)
+    print(f'✓ {all_file}')
+    print(f'  Total avaliado: {len(all_data)}')
+    print(f'  Percentual afetado: {(all_data[\"affected_by_flooding\"].sum()/len(all_data)*100):.1f}%')
+"
+
+# Validação 5: Verificar dados afetados em detalhe
+python -c "
+import geopandas as gpd
+affected = gpd.read_parquet('data/affected_citizens.parquet')
+print(f'=== CIDADÃOS AFETADOS ({len(affected)}) ===')
+print(affected[['citizen_id', 'name', 'area_name', 'severity']].head(10).to_string())
+"
+
+## ============================================================================
+## VALIDAÇÃO - POSTGIS
+## ============================================================================
+
+# Validação 6: Verificar tabelas PostgreSQL
+psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo -c "
+SELECT table_name FROM information_schema.tables WHERE table_schema='public';
+"
+
+# Validação 7: Contar registros em PostGIS
+psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo -c "
+SELECT COUNT(*) as total_citizens FROM citizens;
+SELECT COUNT(*) as affected FROM citizens WHERE affected_by_flooding = TRUE;
+SELECT COUNT(*) as unaffected FROM citizens WHERE affected_by_flooding = FALSE;
+"
+
+# Validação 8: Verificar geometrias no PostGIS
+psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo -c "
+SELECT citizen_id, name, ST_AsText(geometry), affected_by_flooding 
+FROM citizens LIMIT 5;
+"
+
+# Validação 9: Query de bounding box
+psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo -c "
+SELECT ST_AsText(ST_Extent(geometry)) as bbox FROM citizens;
+"
+
+## ============================================================================
+## TESTE DE API FLASK
+## ============================================================================
+
+# Teste 17: Health check
+curl http://<PRESENTATION_IP>/health
+
+# Teste 18: Status banco de dados
+curl http://<PRESENTATION_IP>/api/db-status
+
+# Teste 19: Geometrias
+curl http://<PRESENTATION_IP>/api/geometries | python -m json.tool
+
+# Teste 20: Estatísticas
+curl http://<PRESENTATION_IP>/api/stats | python -m json.tool
+
+# Teste 21: Acessar dashboard
+# Abrir navegador: http://<PRESENTATION_IP>/
+
+## ============================================================================
+## PERFORMANCE E ESCALABILIDADE
+## ============================================================================
+
+# Teste 22: Medir tempo de execução
+time python main.py
+
+# Teste 23: Verificar consumo de memória
+python -c "
+import psutil
+import os
+print(f'Memory available: {psutil.virtual_memory().available / 1024 / 1024:.1f} MB')
+print(f'Process ID: {os.getpid()}')
+ps -o rss= -p $$
+"
+
+# Teste 24: Escalar para dados maiores
+python -c "
+# Modificar multiplicador em bronze_loader
+# affected_points = []
+# for _ in range(600):  # 10x mais dados
+#     ...
+print('Para escalar: editar multiplicadores em bronze_loader.py')
+"
+
+## ============================================================================
+## LIMPEZA
+## ============================================================================
+
+# Limpar dados locais (manter logs)
+rm -rf data/*.parquet
+
+# Limpar banco de dados
+psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo -c "
+DELETE FROM citizens;
+DELETE FROM flooding_areas;
+"
+
+# Limpar S3
+aws s3 rm s3://<BRONZE_BUCKET>/bronze/ --recursive
+aws s3 rm s3://<SILVER_BUCKET>/silver/ --recursive
+aws s3 rm s3://<GOLD_BUCKET>/gold/ --recursive
+
+## ============================================================================
+## NOTAS IMPORTANTES
+## ============================================================================
+
+# Substituir placeholders:
+# - <RDS_ENDPOINT>: obtém via 'terraform output -raw rds_endpoint'
+# - <PRESENTATION_IP>: obtém via 'terraform output -raw presentation_public_ip'
+# - <BRONZE_BUCKET>, <SILVER_BUCKET>, <GOLD_BUCKET>: outputs terraform
+
+# Para credenciais AWS/Huawei:
+# - Exporte variáveis de ambiente OU
+# - Configure em ~/.aws/credentials OU
+# - Use IAM role na VM
+
+# Verificar logs sempre que tiver erro:
+# tail -f logs/pipeline.log

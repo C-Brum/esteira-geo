@@ -1,0 +1,30 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Instalar dependências mínimas
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements para web
+COPY pipeline/requirements.txt .
+
+# Instalar dependências Python (main + web)
+RUN pip install --no-cache-dir flask gunicorn psycopg2-binary geopandas pandas numpy
+
+# Criar logs directory
+RUN mkdir -p /app/logs
+
+# Run user
+RUN useradd -m -u 1000 webapp && chown -R webapp:webapp /app
+
+USER webapp
+
+EXPOSE 5000
+
+VOLUME ["/app/logs"]
+
+# Flask dev server (mudar para gunicorn em produção)
+CMD ["python", "-m", "flask", "run", "--host=0.0.0.0"]

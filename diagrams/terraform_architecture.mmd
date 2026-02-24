@@ -1,0 +1,60 @@
+graph TB
+    subgraph user["👤 Developer/Admin"]
+        tf["Terraform"]
+        ansible["Ansible"]
+    end
+    
+    subgraph aws["☁️ AWS Cloud"]
+        aws_vpc["VPC + Security Groups"]
+        aws_s3_b["S3: Bronze Bucket<br/>Raw Data"]
+        aws_s3_s["S3: Silver Bucket<br/>Normalized"]
+        aws_s3_g["S3: Gold Bucket<br/>Processed"]
+        aws_ec2_proc["EC2: Processing VM<br/>geospatial libs<br/>Python pipeline"]
+        aws_ec2_web["EC2: Presentation VM<br/>Flask + Nginx<br/>Gunicorn"]
+        aws_rds["RDS PostgreSQL<br/>+ PostGIS<br/>Spatial Indexes"]
+    end
+    
+    subgraph huawei["☁️ Huawei Cloud<br/>São Paulo"]
+        hw_vpc["VPC + Security Groups"]
+        hw_obs_b["OBS: Bronze Bucket<br/>Raw Data"]
+        hw_obs_s["OBS: Silver Bucket<br/>Normalized"]
+        hw_obs_g["OBS: Gold Bucket<br/>Processed"]
+        hw_ecs_proc["ECS: Processing VM<br/>geospatial libs<br/>Python pipeline"]
+        hw_ecs_web["ECS: Presentation VM<br/>Flask + Nginx<br/>Gunicorn"]
+        hw_rds["RDS PostgreSQL<br/>+ PostGIS<br/>Spatial Indexes"]
+    end
+    
+    subgraph medallion["🏛️ Medallion Architecture"]
+        bronze["Bronze Layer<br/>Raw Data<br/>GeoParquet"]
+        silver["Silver Layer<br/>Normalized Data<br/>Validated Geometries"]
+        gold["Gold Layer<br/>Processed Data<br/>Spatial Join Results"]
+    end
+    
+    user -->|terraform apply| aws
+    user -->|terraform apply| huawei
+    user -->|ansible-playbook| aws_ec2_proc
+    user -->|ansible-playbook| aws_ec2_web
+    user -->|ansible-playbook| hw_ecs_proc
+    user -->|ansible-playbook| hw_ecs_web
+    
+    aws_ec2_proc -->|writes| aws_s3_b
+    aws_s3_b -->|pipeline| silver
+    silver -->|pipeline| gold
+    gold -->|writes| aws_s3_g
+    aws_s3_g -->|loads| aws_rds
+    
+    hw_ecs_proc -->|writes| hw_obs_b
+    hw_obs_b -->|pipeline| silver
+    silver -->|pipeline| gold
+    gold -->|writes| hw_obs_g
+    hw_obs_g -->|loads| hw_rds
+    
+    aws_ec2_web -->|queries| aws_rds
+    hw_ecs_web -->|queries| hw_rds
+    
+    aws_rds -->|replicates| hw_rds
+    
+    style aws fill:#FF9900,stroke:#000,color:#000
+    style huawei fill:#E60012,stroke:#000,color:#fff
+    style medallion fill:#4CAF50,stroke:#000,color:#fff
+    style user fill:#2196F3,stroke:#000,color:#fff

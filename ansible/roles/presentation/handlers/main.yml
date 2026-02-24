@@ -1,0 +1,12 @@
+---
+# Handlers for presentation role
+
+- name: restart nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: restart supervisor
+  service:
+    name: supervisord
+    state: restarted

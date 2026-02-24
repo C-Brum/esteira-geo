@@ -1,0 +1,4 @@
+# Exemplo de variáveis para um ambiente
+cloud = "hcso"
+region = "us-east-1"
+project = "esteira-geo-dev"

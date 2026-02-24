@@ -1,0 +1,80 @@
+---
+- name: Create processing user
+  user:
+    name: "{{ processing_user }}"
+    home: "{{ processing_home }}"
+    shell: /bin/bash
+    state: present
+
+- name: Create application directory
+  file:
+    path: "{{ processing_app_dir }}"
+    owner: "{{ processing_user }}"
+    group: "{{ processing_user }}"
+    mode: '0755'
+    state: directory
+
+- name: Install system packages for geospatial processing
+  yum:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ geo_packages }}"
+
+- name: Upgrade pip
+  pip:
+    name: pip
+    state: latest
+    executable: pip3
+
+- name: Create virtual environment
+  shell: |
+    python3 -m venv {{ processing_app_dir }}/venv
+    chown -R {{ processing_user }}:{{ processing_user }} {{ processing_app_dir }}/venv
+  args:
+    creates: "{{ processing_app_dir }}/venv"
+
+- name: Install Python packages for processing
+  pip:
+    name: "{{ item }}"
+    state: present
+    virtualenv: "{{ processing_app_dir }}/venv"
+    virtualenv_command: python3 -m venv
+  loop: "{{ processing_pip_packages }}"
+  become: yes
+  become_user: "{{ processing_user }}"
+
+- name: Create .env file for processing VM
+  copy:
+    content: |
+      AWS_S3_BRONZE_BUCKET={{ aws_s3_bronze_bucket }}
+      AWS_S3_SILVER_BUCKET={{ aws_s3_silver_bucket }}
+      AWS_S3_GOLD_BUCKET={{ aws_s3_gold_bucket }}
+      RDS_HOST={{ rds_host }}
+      RDS_PORT={{ rds_port }}
+      RDS_DATABASE={{ rds_database }}
+      RDS_USER={{ rds_user }}
+      RDS_PASSWORD={{ rds_password }}
+    dest: "{{ processing_app_dir }}/.env"
+    owner: "{{ processing_user }}"
+    group: "{{ processing_user }}"
+    mode: '0600'
+
+- name: Create pipeline runner script
+  copy:
+    src: run_pipeline.sh
+    dest: "{{ processing_app_dir }}/run_pipeline.sh"
+    owner: "{{ processing_user }}"
+    group: "{{ processing_user }}"
+    mode: '0755'
+
+- name: Schedule pipeline execution via crontab
+  cron:
+    name: "Execute esteira-geo pipeline"
+    minute: "{{ (pipeline_schedule.split(' ')[0]) }}"
+    hour: "{{ (pipeline_schedule.split(' ')[1]) }}"
+    day: "{{ (pipeline_schedule.split(' ')[2]) }}"
+    month: "{{ (pipeline_schedule.split(' ')[3]) }}"
+    weekday: "{{ (pipeline_schedule.split(' ')[4]) }}"
+    job: "{{ processing_app_dir }}/run_pipeline.sh"
+    user: "{{ processing_user }}"
+    state: present

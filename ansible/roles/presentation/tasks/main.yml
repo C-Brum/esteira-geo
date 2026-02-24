@@ -1,0 +1,121 @@
+---
+- name: Create webapp user
+  user:
+    name: "{{ presentation_user }}"
+    home: "{{ presentation_home }}"
+    shell: /bin/bash
+    state: present
+
+- name: Create application directory
+  file:
+    path: "{{ presentation_app_dir }}"
+    owner: "{{ presentation_user }}"
+    group: "{{ presentation_user }}"
+    mode: '0755'
+    state: directory
+
+- name: Create logs directory
+  file:
+    path: "{{ presentation_app_dir }}/logs"
+    owner: "{{ presentation_user }}"
+    group: "{{ presentation_user }}"
+    mode: '0755'
+    state: directory
+
+- name: Install web packages
+  yum:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ web_packages }}"
+
+- name: Create virtual environment
+  shell: |
+    python3 -m venv {{ presentation_app_dir }}/venv
+    chown -R {{ presentation_user }}:{{ presentation_user }} {{ presentation_app_dir }}/venv
+  args:
+    creates: "{{ presentation_app_dir }}/venv"
+
+- name: Install Python packages for Flask
+  pip:
+    name: "{{ item }}"
+    state: present
+    virtualenv: "{{ presentation_app_dir }}/venv"
+    virtualenv_command: python3 -m venv
+  loop: "{{ presentation_pip_packages }}"
+  become: yes
+  become_user: "{{ presentation_user }}"
+
+- name: Create .env file for Flask app
+  copy:
+    content: |
+      FLASK_ENV={{ flask_env }}
+      FLASK_DEBUG=False
+      RDS_HOST={{ rds_host }}
+      RDS_PORT={{ rds_port }}
+      RDS_DATABASE={{ rds_database }}
+      RDS_USER={{ rds_user }}
+      RDS_PASSWORD={{ rds_password }}
+      AWS_S3_GOLD_BUCKET={{ aws_s3_gold_bucket }}
+      AWS_S3_SILVER_BUCKET={{ aws_s3_silver_bucket }}
+    dest: "{{ presentation_app_dir }}/.env"
+    owner: "{{ presentation_user }}"
+    group: "{{ presentation_user }}"
+    mode: '0600'
+
+- name: Copy Flask application files
+  copy:
+    src: app.py
+    dest: "{{ presentation_app_dir }}/app.py"
+    owner: "{{ presentation_user }}"
+    group: "{{ presentation_user }}"
+    mode: '0644'
+
+- name: Copy Flask requirements
+  copy:
+    src: requirements.txt
+    dest: "{{ presentation_app_dir }}/requirements.txt"
+    owner: "{{ presentation_user }}"
+    group: "{{ presentation_user }}"
+    mode: '0644'
+
+- name: Configure Nginx as reverse proxy
+  template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/conf.d/esteira-geo.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart nginx
+
+- name: Ensure Nginx is started and enabled
+  service:
+    name: nginx
+    state: started
+    enabled: yes
+
+- name: Configure Supervisor for Gunicorn
+  template:
+    src: supervisor.conf.j2
+    dest: /etc/supervisord.d/esteira-geo.ini
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart supervisor
+
+- name: Ensure Supervisor is started and enabled
+  service:
+    name: supervisord
+    state: started
+    enabled: yes
+
+- name: Create systemd service for Flask app (alternative)
+  template:
+    src: esteira-geo.service.j2
+    dest: /etc/systemd/system/esteira-geo.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Reload systemd daemon
+  systemd:
+    daemon_reload: yes

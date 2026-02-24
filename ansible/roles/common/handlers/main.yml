@@ -1,0 +1,7 @@
+---
+# Este arquivo pode ser preenchido com handlers customizados
+# Exemplo:
+# - name: restart ssh
+#   service:
+#     name: sshd
+#     state: restarted

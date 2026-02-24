@@ -1,0 +1,52 @@
+---
+- name: Configure Presentation VM with Flask
+  hosts: presentation
+  become: yes
+  
+  pre_tasks:
+    - name: Check inventory variables are set
+      assert:
+        that:
+          - rds_host is defined
+          - rds_port is defined
+          - aws_s3_gold_bucket is defined
+        fail_msg: "Required inventory variables not set"
+
+  roles:
+    - common
+    - presentation
+
+  post_tasks:
+    - name: Display presentation VM configuration summary
+      debug:
+        msg: |
+          Presentation VM configured successfully!
+          
+          User: {{ presentation_user }}
+          Home: {{ presentation_home }}
+          App Dir: {{ presentation_app_dir }}
+          
+          Flask Configuration:
+          - Framework: Flask with Gunicorn
+          - Reverse Proxy: Nginx on port 80
+          - Workers: {{ gunicorn_workers }}
+          - Threads: {{ gunicorn_threads }}
+          
+          Database:
+          - Host: {{ rds_host }}
+          - Port: {{ rds_port }}
+          - Database: {{ rds_database }}
+          
+          Data Buckets:
+          - Gold: {{ aws_s3_gold_bucket }}
+          - Silver: {{ aws_s3_silver_bucket }}
+          
+          Monitoring:
+          - Supervisor manages Gunicorn process
+          - Access logs: {{ presentation_app_dir }}/logs/gunicorn-access.log
+          - Error logs: {{ presentation_app_dir }}/logs/gunicorn-error.log
+          
+          Next steps:
+          1. SSH to the instance and customize Flask app in {{ presentation_app_dir }}/
+          2. Configure PostGIS geometries table in RDS
+          3. Access application at: http://{{ ansible_host }}/
