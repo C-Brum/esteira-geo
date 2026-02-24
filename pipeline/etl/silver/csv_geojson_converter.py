@@ -35,8 +35,8 @@ class CSVGeoJSONToGeoParquetConverter:
     """Converter para CSV/GeoJSON → GeoParquet"""
     
     def __init__(self):
-        self.data_dir = SAMPLE_DATA_DIR
-        self.silver_path = LOCAL_SILVER_PATH
+        self.data_dir = Path(SAMPLE_DATA_DIR)
+        self.silver_path = Path(LOCAL_SILVER_PATH)
         
     def convert_csv_to_geodataframe(self, csv_file: str, lat_col: str = 'latitude', 
                                     lon_col: str = 'longitude', crs: str = 'EPSG:4326') -> gpd.GeoDataFrame:
