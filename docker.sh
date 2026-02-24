@@ -34,7 +34,7 @@ print_error() {
 
 show_status() {
     print_header "Docker Containers Status"
-    docker-compose ps
+    docker compose ps
     echo ""
     print_info "Endpoints:"
     print_info "  Flask Dashboard: http://localhost:5000"
@@ -53,10 +53,10 @@ start_environment() {
     fi
     
     print_info "Building images..."
-    docker-compose build
+    docker compose build
     
     print_info "Starting containers..."
-    docker-compose up -d
+    docker compose up -d
     
     print_info "Waiting for services to be healthy..."
     sleep 10
@@ -68,7 +68,7 @@ start_environment() {
 
 stop_environment() {
     print_header "Stopping Esteira Geo Docker Environment"
-    docker-compose down
+    docker compose down
     print_success "Environment stopped"
 }
 
@@ -77,11 +77,11 @@ show_logs() {
     
     if [ -n "$service" ]; then
         print_header "Logs for $service"
-        docker-compose logs -f --tail=50 "$service"
+        docker compose logs -f --tail=50 "$service"
     else
         print_info "Available services: postgis, minio, pipeline, web"
         print_info "Usage: ./docker.sh logs postgis"
-        docker-compose logs --tail=20
+        docker compose logs --tail=20
     fi
 }
 
@@ -89,30 +89,30 @@ run_pipeline() {
     print_header "Running Full Pipeline ETL"
     print_info "Executing: Bronze -> Silver -> Gold -> PostGIS"
     
-    docker-compose exec -T pipeline python /app/pipeline/main.py
+    docker compose exec -T pipeline python /app/pipeline/main.py
     
     print_success "Pipeline completed!"
 }
 
 access_shell() {
     print_header "Accessing Pipeline Container Shell"
-    docker-compose exec pipeline bash
+    docker compose exec pipeline bash
 }
 
 run_tests() {
     print_header "Running Pipeline Tests"
     
     print_info "1. Creating Bronze data..."
-    docker-compose exec -T pipeline python -c "from pipeline.etl.bronze_loader import load_sample_data; load_sample_data()"
+    docker compose exec -T pipeline python -c "from pipeline.etl.bronze_loader import load_sample_data; load_sample_data()"
     
     print_info "2. Processing Silver layer..."
-    docker-compose exec -T pipeline python -c "from pipeline.etl.silver_processor import process_silver; process_silver()"
+    docker compose exec -T pipeline python -c "from pipeline.etl.silver_processor import process_silver; process_silver()"
     
     print_info "3. Processing Gold layer (spatial join)..."
-    docker-compose exec -T pipeline python -c "from pipeline.etl.gold_processor import process_gold; process_gold()"
+    docker compose exec -T pipeline python -c "from pipeline.etl.gold_processor import process_gold; process_gold()"
     
     print_info "4. Loading to PostGIS..."
-    docker-compose exec -T pipeline python -c "from pipeline.etl.postgis_loader import load_to_postgis; load_to_postgis()"
+    docker compose exec -T pipeline python -c "from pipeline.etl.postgis_loader import load_to_postgis; load_to_postgis()"
     
     print_success "All tests completed!"
 }
@@ -128,7 +128,7 @@ clean_environment() {
     fi
     
     print_info "Removing containers and volumes..."
-    docker-compose down -v
+    docker compose down -v
     
     print_info "Removing logs..."
     rm -rf logs
@@ -140,7 +140,7 @@ access_database() {
     print_header "Accessing PostgreSQL Database"
     
     print_info "Connecting to esteira_geo database..."
-    docker-compose exec postgis psql -U esteira_user -d esteira_geo
+    docker compose exec postgis psql -U esteira_user -d esteira_geo
 }
 
 access_minio() {
