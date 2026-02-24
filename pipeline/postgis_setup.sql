@@ -1,5 +1,26 @@
+-- ============================================================================
+-- PostGIS Setup Script - Esteira Geo
+-- ============================================================================
+--
+-- IMPORTANTE: Este script é para execução MANUAL APÓS o pipeline rodar!
+-- 
+-- NÃO é executado automaticamente durante inicialização do Docker
+-- (vejo postgis_init.sql para script de inicialização)
+--
+-- USO:
+--   1. Deixe o pipeline rodar completamente: docker compose exec pipeline python main.py
+--   2. Então execute este script: docker compose exec postgis psql -U esteira_user -d esteira_geo -f postgis_setup.sql
+--
+-- Este script executa:
+--   - Validação de extensões PostGIS
+--   - Verificação de tabelas criadas pelo pipeline
+--   - Consultas de análise espacial
+--   - Relatório de dados processados
+--
+-- ============================================================================
+
 -- Setup do PostGIS para Esteira Geo
--- Execute esses comandos após criar as tabelas via Ansible
+-- Execute esses comandos após criar as tabelas via Pipeline
 
 -- 1. Ativar PostGIS (se não estiver já ativado)
 CREATE EXTENSION IF NOT EXISTS postgis;

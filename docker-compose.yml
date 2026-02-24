@@ -11,7 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./pipeline/postgis_setup.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./pipeline/postgis_init.sql:/docker-entrypoint-initdb.d/01_init.sql
     networks:
       - esteira-network
     healthcheck:
