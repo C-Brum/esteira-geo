@@ -11,15 +11,22 @@ import pandas as pd
 import logging
 from config import (
     SAMPLE_DATA_DIR, FLOODING_AREAS_FILE, CITIZENS_FILE,
-    AWS_S3_SILVER_BUCKET, S3_SILVER_PREFIX
+    AWS_S3_SILVER_BUCKET, S3_SILVER_PREFIX,
+    LOCAL_BRONZE_PATH, LOCAL_SILVER_PATH, USE_MINIO,
+    AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 )
 
 logger = logging.getLogger(__name__)
 
 
 def load_from_bronze(filename):
-    """Carrega arquivos da camada Bronze (local ou S3)"""
-    filepath = f"{SAMPLE_DATA_DIR}/{filename}"
+    """Carrega arquivos da camada Bronze (local ou S3)
+
+    Usa os caminhos locais configurados (LOCAL_BRONZE_PATH) quando rodando
+    em ambiente de desenvolvimento com MinIO/Docker.
+    """
+    # Preferir caminho local do volume bronze
+    filepath = f"{LOCAL_BRONZE_PATH}/{filename}"
     logger.info(f"Carregando: {filepath}")
     gdf = gpd.read_parquet(filepath)
     logger.info(f"✓ Carregado: {len(gdf)} registros")
@@ -92,19 +99,31 @@ def normalize_citizens(gdf):
 
 def save_to_silver(gdf, filename):
     """Salva dados normalizados na camada Silver (local ou S3)"""
-    filepath = f"{SAMPLE_DATA_DIR}/{filename}"
+    # Salvar localmente na pasta silver (volume)
+    filepath = f"{LOCAL_SILVER_PATH}/{filename}"
     gdf.to_parquet(filepath)
     logger.info(f"✓ Salvo Silver: {filepath}")
-    
-    # Upload S3 (opcional)
-    try:
-        import boto3
-        s3 = boto3.client('s3')
-        s3_key = f"{S3_SILVER_PREFIX}{filename}"
-        s3.upload_file(filepath, AWS_S3_SILVER_BUCKET, s3_key)
-        logger.info(f"✓ Upload S3: s3://{AWS_S3_SILVER_BUCKET}/{s3_key}")
-    except Exception as e:
-        logger.warning(f"⚠ Upload S3 falhou: {e}")
+
+    # Upload S3/MinIO (opcional) - somente quando configurado
+    if USE_MINIO or (AWS_S3_SILVER_BUCKET and AWS_S3_SILVER_BUCKET != ''):
+        try:
+            import boto3
+            # Construir kwargs do cliente boto3 com endpoint/credenciais quando aplicável
+            client_kwargs = {}
+            if USE_MINIO and AWS_ENDPOINT_URL:
+                client_kwargs['endpoint_url'] = AWS_ENDPOINT_URL
+            if AWS_ACCESS_KEY_ID:
+                client_kwargs['aws_access_key_id'] = AWS_ACCESS_KEY_ID
+            if AWS_SECRET_ACCESS_KEY:
+                client_kwargs['aws_secret_access_key'] = AWS_SECRET_ACCESS_KEY
+
+            logger.debug(f"boto3 client kwargs: {client_kwargs}")
+            s3 = boto3.client('s3', **client_kwargs)
+            s3_key = f"{S3_SILVER_PREFIX}{filename}"
+            s3.upload_file(filepath, AWS_S3_SILVER_BUCKET, s3_key)
+            logger.info(f"✓ Upload S3: s3://{AWS_S3_SILVER_BUCKET}/{s3_key}")
+        except Exception as e:
+            logger.warning(f"⚠ Upload S3 falhou: {e}")
 
 
 def process_silver():
