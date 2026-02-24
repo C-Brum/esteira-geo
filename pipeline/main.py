@@ -21,6 +21,7 @@ from datetime import datetime
 # Importar módulos do pipeline
 from etl.bronze_loader import load_sample_data
 from etl.silver_processor import process_silver
+from etl.silver.csv_geojson_converter import run_conversion as run_csv_geojson_conversion
 from etl.gold_processor import process_gold
 from etl.postgis_loader import load_to_postgis
 from config import (
@@ -52,28 +53,33 @@ def main():
     
     try:
         # BRONZE: Gerar dados de exemplo
-        logger.info("\n[1/5] BRONZE - Carregando dados...")
+        logger.info("\n[1/6] BRONZE - Carregando dados...")
         flooding_bronze, citizens_bronze = load_sample_data()
         logger.info(f"✓ Bronze: {len(flooding_bronze)} áreas + {len(citizens_bronze)} cidadãos")
         
-        # SILVER: Normalizar
-        logger.info("\n[2/5] SILVER - Normalizando...")
+        # SILVER: Converter CSV/GeoJSON e Normalizar
+        logger.info("\n[2/6] SILVER - Convertendo CSV/GeoJSON → GeoParquet...")
+        conversion_summary = run_csv_geojson_conversion()
+        logger.info(f"✓ Conversão: {conversion_summary['successful']} arquivo(s) processado(s)")
+        logger.info(f"  Total de registros convertidos: {conversion_summary['total_records']}")
+        
+        logger.info("\n[2b/6] SILVER - Normalizando dados gerados...")
         flooding_silver, citizens_silver = process_silver()
         logger.info(f"✓ Silver: {len(flooding_silver)} áreas + {len(citizens_silver)} cidadãos")
         
         # GOLD: Processamento geoespacial
-        logger.info("\n[3/5] GOLD - Batimento geográfico...")
+        logger.info("\n[3/6] GOLD - Batimento geográfico...")
         affected, unaffected, all_summary = process_gold()
         logger.info(f"✓ Gold: {len(affected)} afetados + {len(unaffected)} não afetados")
         
         # POSTGIS: Carregar banco de dados
-        logger.info("\n[4/5] POSTGIS - Importar dados...")
+        logger.info("\n[4/6] POSTGIS - Importar dados...")
         success = load_to_postgis()
         if not success:
             logger.warning("⚠ PostGIS load falhou (banco pode estar offline)")
         
         # Resumo final
-        logger.info("\n[5/5] RESUMO FINAL")
+        logger.info("\n[5/6] RESUMO FINAL")
         logger.info("=" * 70)
         logger.info(f"✓ PIPELINE CONCLUÍDO COM SUCESSO!")
         logger.info(f"  Cidadãos Atingidos: {len(affected)}")

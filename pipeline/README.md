@@ -8,36 +8,64 @@ Objetivo: Identificar quais cidadãos estão em áreas atingidas por enchentes e
 
 ### Dados de Entrada
 
-1. **Áreas de Enchente** (3 polígonos):
-   - Partenon
-   - Centro/Menino Deus
-   - Zona Norte
-   - Contém: id, nome, data, severidade, população afetada
+O pipeline suporta múltiplos formatos de entrada:
 
-2. **Dados de Cidadãos** (100 registros):
-   - 60 cidadãos em áreas de risco
-   - 40 cidadãos em áreas seguras
-   - Contém: id, nome, endereço, telefone, data registro, geometria (ponto)
+#### 1. **CSV com Coordenadas** (recomendado para dados tabulares)
+   - `pipeline/data/citizens_sample.csv` (50 registros)
+   - Colunas: citizen_id, name, age, latitude, longitude, registered_date, city, district
+   - Convertido para: GEOMETRY(POINT, EPSG:4326)
+
+#### 2. **GeoJSON com Polígonos** (para áreas geográficas)
+   - `pipeline/data/flooding_areas.geojson` (3 áreas de enchente)
+   - Geometrias: Polygon (são de enchente)
+   - Convertido automaticamente para GeoParquet
+
+#### 3. **GeoJSON com Pontos** (para dados localizados)
+   - `pipeline/data/citizens_additional.geojson` (5 cidadãos extra)
+   - Geometrias: Point (localizações de cidadãos)
+   - Convertido automaticamente para GeoParquet
+
+#### 4. **Dados Gerados** (para testes sem fontes externas)
+   - Polígonos de enchente: 3 registros
+   - Cidadãos (gerados): 100 registros
+
+**Total de Dados Processados:**
+- Registros CSV: 50
+- Registros GeoJSON Polygons: 3
+- Registros GeoJSON Points: 5
+- Registros Gerados: 100
+- **Total: 158 registros geoespaciais**
 
 ### Processamento
 
 ```
-Bronze → Silver → Gold → PostGIS → Flask
+INPUT (CSV/GeoJSON/Gerado)
+    ↓
+Bronze Layer (conversão para GeoParquet + ingestão)
+    ↓
+Silver Layer (normalização + validação + metadados)
+    ↓
+Gold Layer (spatial join + processamento)
+    ↓
+PostGIS (persistência em RDS)
+    ↓
+Flask Dashboard (visualização + APIs)
 ```
 
-- **Bronze**: Geração de dados de exemplo em GeoParquet
-- **Silver**: Normalização e validação de qualidade
-- **Gold**: Batimento geográfico (spatial join)
-- **PostGIS**: Armazenamento em RDS com índices espaciais
-- **Flask**: Visualização e APIs
+**Detalhes:**
+- **Bronze**: Carrega dados brutos (CSV → Point, GeoJSON → preserva geometria)
+- **Silver**: Normaliza tipos, valida geometrias, adiciona metadados
+- **Gold**: Executa ST_Contains para identificar cidadãos em áreas de enchente
+- **PostGIS**: Armazena com índices GIST para consultas rápidas
+- **Flask**: Expõe APIs REST e dashboard interativo
 
 ### Saída
 
-3 arquivos GeoParquet + dados em PostGIS:
+GeoParquets processados + dados em PostGIS:
 
-1. `affected_citizens.parquet` - 60 cidadãos em área atingida
-2. `unaffected_citizens.parquet` - 40 cidadãos fora de área atingida
-3. `all_citizens_evaluated.parquet` - 100 cidadãos com status
+1. `affected_citizens.parquet` - Cidadãos em área atingida (ST_Contains)
+2. `unaffected_citizens.parquet` - Cidadãos fora de área atingida
+3. `all_citizens_evaluated.parquet` - Todos os cidadãos com status
 
 ---
 
@@ -76,9 +104,12 @@ python main.py
 
 ### 4. Testes Unitários
 
-Veja `testes_e_validacoes.txt` para comandos completos de teste.
+Veja documentação de testes:
 
 ```bash
+# Teste da conversão CSV/GeoJSON → GeoParquet
+python -m etl.silver.csv_geojson_converter
+
 # Teste individual Bronze
 python etl/bronze_loader.py
 
@@ -91,6 +122,15 @@ python etl/gold_processor.py
 # Teste PostGIS (requer banco online)
 python etl/postgis_loader.py
 ```
+
+## 📚 Documentação
+
+### Guias Principais
+
+- **[CSV_GEOJSON_GUIDE.md](CSV_GEOJSON_GUIDE.md)** - Como usar CSV/GeoJSON no pipeline
+- **[TESTES_CSV_GEOJSON.md](TESTES_CSV_GEOJSON.md)** - Testes e validações dos novos formatos
+- **[DOCKER.md](DOCKER.md)** - Instruções de execução em Docker
+- **[testes_e_validacoes.txt](testes_e_validacoes.txt)** - Logs de testes anteriores
 
 ---
 
