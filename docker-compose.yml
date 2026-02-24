@@ -89,7 +89,6 @@ services:
       - pipeline_bronze:/data/bronze
       - pipeline_silver:/data/silver
       - pipeline_gold:/data/gold
-      - ./logs/pipeline:/app/logs
     networks:
       - esteira-network
     command: tail -f /dev/null  # Fica awake para testes manuais

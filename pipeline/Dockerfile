@@ -27,16 +27,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY pipeline/*.py ./
 COPY pipeline/etl ./etl
 
-# Criar diretórios para dados
-RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs
+# Criar diretórios para dados e logs
+RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs && \
+    chmod -R 755 /app/logs
 
 # Def user para rodar pipeline
-RUN useradd -m -u 1000 esteira && chown -R esteira:esteira /app /data
+RUN useradd -m -u 1000 esteira && \
+    chown -R esteira:esteira /app /data
 
 USER esteira
 
-# Volume para logs
-VOLUME ["/app/logs", "/data/bronze", "/data/silver", "/data/gold"]
+# Volumes: data layers
+VOLUME ["/data/bronze", "/data/silver", "/data/gold"]
 
 # Default command: manter container rodando
 CMD ["tail", "-f", "/dev/null"]
