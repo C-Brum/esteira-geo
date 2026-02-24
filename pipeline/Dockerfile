@@ -26,7 +26,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código do pipeline (copia conteúdo, não a pasta)
 COPY pipeline/*.py ./
 COPY pipeline/etl ./etl
-COPY pipeline/data ./data
 
 # Criar diretórios para dados
 RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs
