@@ -85,7 +85,6 @@ services:
       RDS_PASSWORD: esteira_local_2025
       PYTHONUNBUFFERED: 1
     volumes:
-      - ./pipeline:/app/pipeline
       - pipeline_bronze:/data/bronze
       - pipeline_silver:/data/silver
       - pipeline_gold:/data/gold
