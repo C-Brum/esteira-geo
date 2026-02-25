@@ -42,23 +42,6 @@ services:
       retries: 3
 
   # MinIO Client (criar buckets automaticamente)
-  minio-init:
-    image: minio/mc:latest
-    container_name: esteira-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    networks:
-      - esteira-network
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin123;
-      /usr/bin/mc mb myminio/bronze --ignore-existing;
-      /usr/bin/mc mb myminio/silver --ignore-existing;
-      /usr/bin/mc mb myminio/gold --ignore-existing;
-      exit 0;
-      "
-
   # Pipeline ETL
   pipeline:
     build:
@@ -68,8 +51,8 @@ services:
     depends_on:
       postgis:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
@@ -122,6 +105,26 @@ services:
     networks:
       - esteira-network
     command: python app.py
+
+  # Watcher: monitora /data/bronze e dispara pipeline automaticamente
+  pipeline-watcher:
+    image: esteira-geo-pipeline
+    container_name: esteira-pipeline-watcher
+    depends_on:
+      pipeline:
+        condition: service_started
+    environment:
+      BRONZE_DIR: /data/bronze
+      POLL_INTERVAL: 5
+    volumes:
+      - ./pipeline/data:/app/data
+      - pipeline_bronze:/data/bronze
+      - pipeline_silver:/data/silver
+      - pipeline_gold:/data/gold
+    networks:
+      - esteira-network
+    restart: unless-stopped
+    command: ["python", "/app/watchers/watch_bronze.py"]
 
 volumes:
   postgres_data:

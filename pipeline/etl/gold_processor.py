@@ -10,8 +10,9 @@ Gold Processor - Processamento geoespacial e batimento de dados
 import geopandas as gpd
 import pandas as pd
 import logging
+from pathlib import Path
 from config import (
-    SAMPLE_DATA_DIR,
+    LOCAL_SILVER_PATH, LOCAL_GOLD_PATH,
     AWS_S3_GOLD_BUCKET, S3_GOLD_PREFIX,
     AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, ALL_CITIZENS_FILE
 )
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def load_from_silver(filename):
     """Carrega arquivos da camada Silver"""
-    filepath = f"{SAMPLE_DATA_DIR}/{filename}"
+    filepath = Path(LOCAL_SILVER_PATH) / filename
     logger.info(f"Carregando Silver: {filepath}")
     gdf = gpd.read_parquet(filepath)
     logger.info(f"✓ Carregado: {len(gdf)} registros")
@@ -141,8 +142,9 @@ def generate_all_citizens_summary(gdf):
 
 def save_to_gold(gdf, filename):
     """Salva dados processados na camada Gold"""
-    filepath = f"{SAMPLE_DATA_DIR}/{filename}"
-    gdf.to_parquet(filepath)
+    filepath = Path(LOCAL_GOLD_PATH) / filename
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    gdf.to_parquet(str(filepath))
     logger.info(f"✓ Salvo Gold: {filepath}")
     
     # Upload S3 (opcional)

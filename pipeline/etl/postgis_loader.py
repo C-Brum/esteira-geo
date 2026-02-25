@@ -11,8 +11,9 @@ import geopandas as gpd
 import psycopg2
 from psycopg2.extras import execute_values
 import logging
+from pathlib import Path
 from config import (
-    SAMPLE_DATA_DIR, RDS_HOST, RDS_PORT, RDS_DATABASE,
+    LOCAL_GOLD_PATH, RDS_HOST, RDS_PORT, RDS_DATABASE,
     RDS_USER, RDS_PASSWORD,
     AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, ALL_CITIZENS_FILE
 )
@@ -175,6 +176,48 @@ def query_statistics(conn):
     return stats
 
 
+def load_flooding_areas_to_postgis(conn):
+    """Carrega áreas de enchente da Silver para PostGIS"""
+    logger.info("Carregando áreas de enchente para PostGIS...")
+    
+    try:
+        # Carregar GeoDataFrame da Silver
+        from config import LOCAL_SILVER_PATH
+        silver_path = Path(LOCAL_SILVER_PATH) / "silver_flooding_areas_porto_alegre.parquet"
+        
+        gdf = gpd.read_parquet(str(silver_path))
+        cursor = conn.cursor()
+        
+        # Limpar dados antigos
+        cursor.execute("DELETE FROM flooding_areas")
+        
+        for idx, row in gdf.iterrows():
+            # Converter geometria para WKT
+            geom_wkt = row.geometry.wkt
+            
+            sql = """
+                INSERT INTO flooding_areas (area_name, flood_date, severity, affected_population, geometry)
+                VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326))
+            """
+            
+            cursor.execute(sql, (
+                str(row.get('area_name', f'Area_{idx}')),
+                row.get('flood_date', None),
+                str(row.get('severity', 'unknown')),
+                int(row.get('affected_population', 0)) if 'affected_population' in row else 0,
+                geom_wkt
+            ))
+        
+        conn.commit()
+        cursor.close()
+        logger.info(f"✓ Carregadas {len(gdf)} áreas de enchente")
+        return len(gdf)
+        
+    except Exception as e:
+        logger.error(f"✗ Erro ao carregar áreas de enchente: {e}")
+        return 0
+
+
 def load_to_postgis():
     """Orquestrador: carrega dados no PostGIS"""
     logger.info("=" * 60)
@@ -191,12 +234,15 @@ def load_to_postgis():
         # Criar tabelas
         create_tables(conn)
         
-        # Carregar dados
-        affected_path = f"{SAMPLE_DATA_DIR}/{AFFECTED_CITIZENS_FILE}"
-        unaffected_path = f"{SAMPLE_DATA_DIR}/{UNAFFECTED_CITIZENS_FILE}"
+        # Carregar dados de enchentes PRIMEIRO
+        load_flooding_areas_to_postgis(conn)
         
-        load_affected_citizens_to_postgis(conn, affected_path)
-        load_unaffected_citizens_to_postgis(conn, unaffected_path)
+        # Carregar dados de cidadãos
+        affected_path = Path(LOCAL_GOLD_PATH) / AFFECTED_CITIZENS_FILE
+        unaffected_path = Path(LOCAL_GOLD_PATH) / UNAFFECTED_CITIZENS_FILE
+        
+        load_affected_citizens_to_postgis(conn, str(affected_path))
+        load_unaffected_citizens_to_postgis(conn, str(unaffected_path))
         
         # Retornar estatísticas
         stats = query_statistics(conn)

@@ -26,6 +26,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código do pipeline (copia conteúdo, não a pasta)
 COPY pipeline/*.py ./
 COPY pipeline/etl ./etl
+COPY pipeline/init_minio_buckets.py ./
+COPY pipeline/entrypoint.sh ./
+COPY pipeline/watchers ./watchers
+
+# Dar permissão de execução ao entrypoint
+RUN chmod +x /app/entrypoint.sh
 
 # Criar diretórios para dados e logs
 RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs /app/data && \
@@ -40,5 +46,5 @@ USER esteira
 # Volumes: data layers
 VOLUME ["/data/bronze", "/data/silver", "/data/gold"]
 
-# Default command: manter container rodando
-CMD ["tail", "-f", "/dev/null"]
+# Entrypoint: inicializa buckets e mantém container rodando
+ENTRYPOINT ["/app/entrypoint.sh"]

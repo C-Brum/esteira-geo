@@ -25,36 +25,38 @@ logger = logging.getLogger(__name__)
 def create_flooding_areas_geoparquet():
     """
     Cria GeoDataFrame com polígonos de áreas atingidas por enchente em Porto Alegre
-    Coordenadas aproximadas de Porto Alegre: -30.0, -51.2
+    Coordenadas aproximadas de Porto Alegre: lat=-30.0326, lon=-51.2093
+    WGS84 format: (longitude, latitude)
     """
     logger.info("Gerando dados de áreas de enchente (Porto Alegre)...")
     
     # Polígonos de exemplo (áreas atingidas por enchente)
-    # Porto Alegre fica por volta de: -30.0326, -51.2093
+    # Porto Alegre fica por volta de: lat=-30.0326, lon=-51.2093
+    # Formato WGS84: (longitude, latitude)
     polygons = [
-        # Área 1: Partenon (próximo ao Rio Grande do Sul)
+        # Área 1: Partenon
         Polygon([
-            (-30.05, -51.30),
-            (-30.05, -51.20),
-            (-29.95, -51.20),
-            (-29.95, -51.30),
-            (-30.05, -51.30)
+            (-51.30, -30.05),
+            (-51.20, -30.05),
+            (-51.20, -29.95),
+            (-51.30, -29.95),
+            (-51.30, -30.05)
         ]),
         # Área 2: Centro/Menino Deus
         Polygon([
-            (-30.03, -51.22),
-            (-30.03, -51.18),
-            (-29.98, -51.18),
-            (-29.98, -51.22),
-            (-30.03, -51.22)
+            (-51.22, -30.03),
+            (-51.18, -30.03),
+            (-51.18, -29.98),
+            (-51.22, -29.98),
+            (-51.22, -30.03)
         ]),
         # Área 3: Zona Norte
         Polygon([
-            (-29.92, -51.25),
-            (-29.92, -51.15),
-            (-29.88, -51.15),
-            (-29.88, -51.25),
-            (-29.92, -51.25)
+            (-51.25, -29.92),
+            (-51.15, -29.92),
+            (-51.15, -29.88),
+            (-51.25, -29.88),
+            (-51.25, -29.92)
         ]),
     ]
     
@@ -78,48 +80,52 @@ def create_citizens_geoparquet():
     """
     Cria GeoDataFrame com dados de cidadãos (100 registros)
     Alguns estão dentro de áreas atingidas, outros não
+    Format: WGS84 (longitude, latitude)
     """
     logger.info("Gerando dados de cidadãos (100 registros)...")
     
     np.random.seed(42)
     
-    # Coordenadas base (Porto Alegre)
+    # Coordenadas base (Porto Alegre) - WGS84 format: (lon, lat)
     base_lat = -30.0326
     base_lon = -51.2093
     
     # Gerar 60 cidadãos em área de risco (dentro dos polígonos de enchente)
+    # Format: (longitude, latitude)
     risk_coords = [
-        (-30.01, -51.24),  # Área 1
-        (-30.01, -51.22),  # Área 2
-        (-29.90, -51.20),  # Área 3
+        (-51.24, -30.01),  # Área 1
+        (-51.22, -30.01),  # Área 2
+        (-51.20, -29.90),  # Área 3
     ]
     
     affected_points = []
     for _ in range(60):
         base = risk_coords[np.random.randint(0, len(risk_coords))]
-        lat = base[0] + np.random.uniform(-0.02, 0.02)
-        lon = base[1] + np.random.uniform(-0.02, 0.02)
+        # usar distribuição normal com sigma maior para dispersão (aprox ~3km)
+        lon = float(np.random.normal(loc=base[0], scale=0.03))
+        lat = float(np.random.normal(loc=base[1], scale=0.03))
         affected_points.append(Point(lon, lat))
     
     # Gerar 40 cidadãos fora de área de risco
+    # Format: (longitude, latitude)
     safe_coords = [
-        (-29.80, -51.10),  # Zona sul (segura)
-        (-30.15, -51.40),  # Zona leste (segura)
+        (-51.10, -29.80),  # Zona sul (segura)
+        (-51.40, -30.15),  # Zona leste (segura)
     ]
     
     safe_points = []
     for _ in range(40):
         base = safe_coords[np.random.randint(0, len(safe_coords))]
-        lat = base[0] + np.random.uniform(-0.02, 0.02)
-        lon = base[1] + np.random.uniform(-0.02, 0.02)
+        lon = float(np.random.normal(loc=base[0], scale=0.05))
+        lat = float(np.random.normal(loc=base[1], scale=0.05))
         safe_points.append(Point(lon, lat))
-    
+
     all_points = affected_points + safe_points
-    
+
     # Criar DataFrame
     names = [f"Citizen_{i:03d}" for i in range(100)]
     addresses = [f"Rua {i}, nº {np.random.randint(1, 1000)}, Porto Alegre" for i in range(100)]
-    
+
     gdf = gpd.GeoDataFrame(
         {
             'citizen_id': range(100),
@@ -131,14 +137,16 @@ def create_citizens_geoparquet():
         geometry=all_points,
         crs='EPSG:4326'
     )
-    
+
     logger.info(f"✓ Criado GeoDataFrame com {len(gdf)} cidadãos")
     return gdf
 
 
 def save_to_geoparquet(gdf, filename):
     """Salva GeoDataFrame como GeoParquet na camada Bronze"""
+    import os
     filepath = f"{LOCAL_BRONZE_PATH}/{filename}"
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
     gdf.to_parquet(filepath)
     logger.info(f"✓ Salvo: {filepath}")
     return filepath

@@ -2,17 +2,25 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Instalar dependências mínimas
+# Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     curl \
+    gdal-bin \
+    libgdal-dev \
+    libgeos-dev \
+    libproj-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements para web
+# Variáveis de ambiente para GDAL
+ENV GDAL_CONFIG=/usr/bin/gdal-config
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+
+# Copiar requirements
 COPY pipeline/requirements.txt .
 
-# Instalar dependências Python (main + web)
-RUN pip install --no-cache-dir flask gunicorn psycopg2-binary geopandas pandas numpy
+# Instalar todas as dependências Python do requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt flask gunicorn
 
 # Criar logs directory
 RUN mkdir -p /app/logs
@@ -26,5 +34,5 @@ EXPOSE 5000
 
 VOLUME ["/app/logs"]
 
-# Flask dev server (mudar para gunicorn em produção)
-CMD ["python", "-m", "flask", "run", "--host=0.0.0.0"]
+# Executar app.py diretamente
+CMD ["python", "app.py"]
