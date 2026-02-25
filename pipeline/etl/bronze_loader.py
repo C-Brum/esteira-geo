@@ -208,6 +208,36 @@ def load_sample_data():
     flooding_path = save_to_geoparquet(flooding_gdf, FLOODING_AREAS_FILE)
     citizens_path = save_to_geoparquet(citizens_gdf, CITIZENS_FILE)
     
+    # Também salvar formatos adicionais esperados pelo conversor (CSV / GeoJSON)
+    # Flooding areas → GeoJSON
+    flooding_geojson = f"{LOCAL_BRONZE_PATH}/{FLOODING_AREAS_FILE.rsplit('.', 1)[0]}.geojson"
+    try:
+        flooding_gdf.to_file(flooding_geojson, driver='GeoJSON')
+        logger.info(f"✓ Salvo: {flooding_geojson}")
+        upload_to_s3(flooding_geojson, f"{FLOODING_AREAS_FILE.rsplit('.',1)[0]}.geojson")
+    except Exception as e:
+        logger.warning(f"Não foi possível salvar GeoJSON de áreas: {e}")
+
+    # Citizens → CSV + GeoJSON
+    citizens_csv = f"{LOCAL_BRONZE_PATH}/{CITIZENS_FILE.rsplit('.', 1)[0]}.csv"
+    citizens_geojson = f"{LOCAL_BRONZE_PATH}/{CITIZENS_FILE.rsplit('.', 1)[0]}.geojson"
+    try:
+        # Criar DataFrame com colunas lat/lon para CSV
+        citizens_df = citizens_gdf.copy()
+        citizens_df['longitude'] = citizens_df.geometry.x
+        citizens_df['latitude'] = citizens_df.geometry.y
+        citizens_df.drop(columns=['geometry'], inplace=True)
+        citizens_df.to_csv(citizens_csv, index=False)
+        logger.info(f"✓ Salvo: {citizens_csv}")
+        upload_to_s3(citizens_csv, f"{CITIZENS_FILE.rsplit('.',1)[0]}.csv")
+
+        # GeoJSON export
+        citizens_gdf.to_file(citizens_geojson, driver='GeoJSON')
+        logger.info(f"✓ Salvo: {citizens_geojson}")
+        upload_to_s3(citizens_geojson, f"{CITIZENS_FILE.rsplit('.',1)[0]}.geojson")
+    except Exception as e:
+        logger.warning(f"Não foi possível salvar CSV/GeoJSON de cidadãos: {e}")
+
     # Upload para S3
     upload_to_s3(flooding_path, FLOODING_AREAS_FILE)
     upload_to_s3(citizens_path, CITIZENS_FILE)

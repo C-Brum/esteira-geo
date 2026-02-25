@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     SAMPLE_DATA_DIR, S3_SILVER_PREFIX,
     AWS_S3_SILVER_BUCKET, USE_MINIO, USE_S3, STORAGE_MODE,
-    AWS_ENDPOINT_URL, LOCAL_SILVER_PATH
+    AWS_ENDPOINT_URL, LOCAL_SILVER_PATH, LOCAL_BRONZE_PATH
 )
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,11 @@ class CSVGeoJSONToGeoParquetConverter:
     """Converter para CSV/GeoJSON → GeoParquet"""
     
     def __init__(self):
+        # Procurar por arquivos em SAMPLE_DATA_DIR e também no diretório local Bronze
         self.data_dir = Path(SAMPLE_DATA_DIR)
+        self.bronze_path = Path(LOCAL_BRONZE_PATH)
+        # Lista de diretórios para busca (ordem de preferência)
+        self.data_dirs = [self.data_dir, self.bronze_path]
         self.silver_path = Path(LOCAL_SILVER_PATH)
         
     def convert_csv_to_geodataframe(self, csv_file: str, lat_col: str = 'latitude', 
@@ -204,8 +208,11 @@ class CSVGeoJSONToGeoParquetConverter:
         """
         results = {}
         
-        # Processar CSVs
-        csv_files = list(self.data_dir.glob('*.csv'))
+        # Processar CSVs — buscar em múltiplos diretórios (SAMPLE_DATA_DIR e bronze local)
+        csv_files = []
+        for d in self.data_dirs:
+            if d.exists():
+                csv_files.extend(list(Path(d).glob('*.csv')))
         logger.info(f"Encontrados {len(csv_files)} arquivos CSV")
         
         for csv_file in csv_files:
@@ -226,7 +233,11 @@ class CSVGeoJSONToGeoParquetConverter:
                 }
         
         # Processar GeoJSONs
-        geojson_files = list(self.data_dir.glob('*.geojson'))
+        # Processar GeoJSONs — buscar em múltiplos diretórios (SAMPLE_DATA_DIR e bronze local)
+        geojson_files = []
+        for d in self.data_dirs:
+            if d.exists():
+                geojson_files.extend(list(Path(d).glob('*.geojson')))
         logger.info(f"Encontrados {len(geojson_files)} arquivos GeoJSON")
         
         for geojson_file in geojson_files:
