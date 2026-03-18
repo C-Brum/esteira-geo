@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     SAMPLE_DATA_DIR, S3_SILVER_PREFIX,
     AWS_S3_SILVER_BUCKET, USE_MINIO, USE_S3, STORAGE_MODE,
-    AWS_ENDPOINT_URL, LOCAL_SILVER_PATH, LOCAL_BRONZE_PATH
+    AWS_ENDPOINT_URL, LOCAL_SILVER_USE_CASE, LOCAL_BRONZE_USE_CASE
 )
 
 logger = logging.getLogger(__name__)
@@ -35,42 +35,32 @@ class CSVGeoJSONToGeoParquetConverter:
     """Converter para CSV/GeoJSON → GeoParquet"""
     
     def __init__(self):
-        # Procurar por arquivos em SAMPLE_DATA_DIR e também no diretório local Bronze
         self.data_dir = Path(SAMPLE_DATA_DIR)
-        self.bronze_path = Path(LOCAL_BRONZE_PATH)
-        # Lista de diretórios para busca (ordem de preferência)
-        self.data_dirs = [self.data_dir, self.bronze_path]
-        self.silver_path = Path(LOCAL_SILVER_PATH)
+        self.bronze_path = Path(LOCAL_BRONZE_USE_CASE)
+        self.data_dirs = [self.bronze_path]
+        self.silver_path = Path(LOCAL_SILVER_USE_CASE)
         
-    def convert_csv_to_geodataframe(self, csv_file: str, lat_col: str = 'latitude', 
+    def convert_csv_to_geodataframe(self, csv_file: str, lat_col: str = 'latitude',
                                     lon_col: str = 'longitude', crs: str = 'EPSG:4326') -> gpd.GeoDataFrame:
-        """
-        Converte CSV com colunas lat/lon para GeoDataFrame
-        
-        Args:
-            csv_file: Caminho do arquivo CSV
-            lat_col: Nome da coluna de latitude
-            lon_col: Nome da coluna de longitude
-            crs: Sistema de coordenadas
-            
-        Returns:
-            GeoDataFrame com geometria Point
-        """
         logger.info(f"Lendo CSV: {csv_file}")
-        
-        df = pd.read_csv(csv_file)
-        
+
+        df = pd.read_csv(csv_file, dtype={'document_number': str, 'citizen_id': str})
+
         # Validar colunas obrigatórias
         if lat_col not in df.columns or lon_col not in df.columns:
             raise ValueError(f"Colunas '{lat_col}' ou '{lon_col}' não encontradas no CSV")
-        
+
+        # Normalizar nome da coluna de data (registered_date → registration_date)
+        DATE_ALIASES = {'registered_date': 'registration_date', 'data_registro': 'registration_date'}
+        df.rename(columns=DATE_ALIASES, inplace=True)
+
         # Criar geometria Point
         geometry = gpd.points_from_xy(df[lon_col], df[lat_col])
         gdf = gpd.GeoDataFrame(df, geometry=geometry, crs=crs)
-        
+
         # Remover colunas de coordenadas originais (agora são parte da geometria)
         gdf = gdf.drop(columns=[lat_col, lon_col])
-        
+
         return gdf
     
     def convert_geojson_to_geodataframe(self, geojson_file: str) -> gpd.GeoDataFrame:
@@ -104,24 +94,20 @@ class CSVGeoJSONToGeoParquetConverter:
         gdf['geometry'] = gdf['geometry'].apply(lambda x: x if x.is_valid else x.buffer(0))
         
         # Padronizar tipos de dados
+        DATE_HINTS = ('date', 'data', 'datetime', 'timestamp', 'dt_')
         for col in gdf.columns:
             if col == 'geometry':
                 continue
-                
-            # Detectar e converter datas
-            if gdf[col].dtype == 'object':
+
+            # Converter apenas colunas cujo nome sugere data
+            if gdf[col].dtype == 'object' and any(h in col.lower() for h in DATE_HINTS):
                 try:
-                    gdf[col] = pd.to_datetime(gdf[col], errors='coerce')
-                    # Se a conversão funcionou para alguns valores, manter como datetime
-                    if gdf[col].notna().sum() > 0:
+                    converted = pd.to_datetime(gdf[col], errors='coerce')
+                    if converted.notna().sum() > 0:
+                        gdf[col] = converted
                         logger.debug(f"Coluna '{col}' convertida para datetime")
-                        continue
-                except:
+                except Exception:
                     pass
-            
-            # Converter strings para lowercase (padronização)
-            if gdf[col].dtype == 'object' and gdf[col].str.len().max() < 100:
-                gdf[col] = gdf[col].apply(lambda x: x.lower() if isinstance(x, str) else x)
         
         # Adicionar metadados
         gdf['_processed_date'] = datetime.now().isoformat()

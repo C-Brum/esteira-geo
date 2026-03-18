@@ -2,46 +2,54 @@
 
 Ambiente completo dockerizado para desenvolvimento e teste local da esteira de processamento geoespacial.
 
-## 🏗️ Arquitetura
+## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────┐
-│    Local Docker Environment (docker-compose)    │
-├─────────────────────────────────────────────────┤
-│                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌────────┐ │
-│  │  PostgreSQL │  │  MinIO      │  │ Flask  │ │
-│  │  + PostGIS  │  │  (S3 sim)   │  │  (Web) │ │
-│  └─────────────┘  └─────────────┘  └────────┘ │
-│                                                 │
-│  ┌──────────────────────────────────────────┐  │
-│  │  Pipeline ETL (Container)                │  │
-│  │  ├─ Bronze Loader                        │  │
-│  │  ├─ Silver Processor                     │  │
-│  │  ├─ Gold Processor (Spatial Join)        │  │
-│  │  └─ PostGIS Loader                       │  │
-│  └──────────────────────────────────────────┘  │
-│                                                 │
-└─────────────────────────────────────────────────┘
-     Volumes: bronze/, silver/, gold/, postgres/
+┌─────────────────────────────────────────────────────┐
+│       Local Docker Environment (docker compose)     │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │
+│  │  PostgreSQL │  │    MinIO    │  │   Flask    │  │
+│  │  + PostGIS  │  │  (S3 sim)   │  │   (Web)    │  │
+│  └─────────────┘  └─────────────┘  └────────────┘  │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  Pipeline ETL (Container)                    │   │
+│  │  ├─ Bronze Loader                            │   │
+│  │  ├─ CSV/GeoJSON Converter (Silver)           │   │
+│  │  ├─ Silver Processor (+ consolidação)        │   │
+│  │  ├─ Gold Processor (Spatial Join + dedup)    │   │
+│  │  └─ PostGIS Loader                           │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  Pipeline Watcher                            │   │
+│  │  └─ Polling /data/bronze/enchentes_poa (5s)  │   │
+│  │     Dispara main.py ao detectar mudanças     │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+  Volumes: ./data/bronze (bind), silver/, gold/, postgres/
 ```
 
-## 📦 Serviços
+## Serviços
 
 | Serviço | Porta | Descrição |
 |---------|-------|-----------|
-| PostgreSQL | 5432 | Database com PostGIS |
-| MinIO | 9000 | API S3 compatível |
-| MinIO Console | 9001 | UI para MinIO |
-| Flask Web | 5000 | Dashboard com visualização |
-| Pipeline | - | ETL (container sempre rodando) |
+| `postgis` | 5432 | PostgreSQL + PostGIS |
+| `minio` | 9000 | API S3 compatível |
+| `minio` console | 9001 | UI MinIO |
+| `web` | 5000 | Flask dashboard |
+| `pipeline` | — | ETL (standby para execução manual) |
+| `pipeline-watcher` | — | Monitora `data/bronze/enchentes_poa/` e dispara pipeline |
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Iniciar o ambiente completo
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 Aguarde ~30 segundos para todos os serviços ficarem saudáveis.
@@ -49,234 +57,190 @@ Aguarde ~30 segundos para todos os serviços ficarem saudáveis.
 ### 2. Verificar status
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
-Você deve ver:
+Saída esperada:
 ```
-NAME              STATUS
-esteira-postgis   healthy
-esteira-minio     healthy
-esteira-web       running
-esteira-pipeline  running
+NAME                       STATUS
+esteira-postgis            healthy
+esteira-minio              healthy
+esteira-web                running
+esteira-pipeline           running
+esteira-pipeline-watcher   running
 ```
 
 ### 3. Acessar serviços
 
 - **Flask Dashboard**: http://localhost:5000
-- **MinIO Console**: http://localhost:9001 (user: minioadmin / pass: minioadmin123)
-- **PostgreSQL**: localhost:5432 (user: esteira_user / pass: esteira_local_2025)
+- **MinIO Console**: http://localhost:9001 (user: `minioadmin` / pass: `minioadmin123`)
+- **PostgreSQL**: localhost:5432 (user: `esteira_user` / pass: `esteira_local_2025` / db: `esteira_geo`)
 
-## 🔄 Executar o Pipeline
+## Executar o Pipeline
 
-### Opção 1: Executar dentro do container
+### Manualmente
 
 ```bash
-# Acessar shell do pipeline
-docker-compose exec pipeline bash
-
-# Dentro do container:
-cd /app
-python pipeline/main.py
+docker compose exec pipeline python /app/main.py
 ```
 
-### Opção 2: Executar via docker-compose
+### Automaticamente (Watcher)
+
+Qualquer arquivo CSV ou GeoJSON copiado para `data/bronze/enchentes_poa/` dispara o pipeline em até 5 segundos:
 
 ```bash
-docker-compose exec pipeline python pipeline/main.py
+cp meus_cidadaos.csv data/bronze/enchentes_poa/
+# pipeline-watcher detecta e executa main.py automaticamente
 ```
 
-### Opção 3: Executar um estágio específico
+Se o arquivo já existia antes do container subir, use `touch` para forçar detecção:
 
 ```bash
-# Apenas Bronze
-docker-compose exec pipeline python -c "from pipeline.etl.bronze_loader import load_sample_data; load_sample_data()"
-
-# Apenas Silver
-docker-compose exec pipeline python -c "from pipeline.etl.silver_processor import process_silver; process_silver()"
-
-# Apenas Gold (Spatial Join)
-docker-compose exec pipeline python -c "from pipeline.etl.gold_processor import process_gold; process_gold()"
-
-# Apenas PostGIS
-docker-compose exec pipeline python -c "from pipeline.etl.postgis_loader import load_to_postgis; load_to_postgis()"
+touch data/bronze/enchentes_poa/meu_arquivo.csv
 ```
 
-## 📊 Verificar dados no MinIO
-
-### Via Console (UI)
-
-1. Abra http://localhost:9001
-2. Login: minioadmin / minioadmin123
-3. Navegue para os buckets:
-   - `/bronze` - dados brutos (flooding_areas, citizens)
-   - `/silver` - dados normalizados
-   - `/gold` - dados processados (affected/unaffected)
-
-### Via CLI
+### Etapa individual
 
 ```bash
-# Listar buckets
-docker-compose exec minio mc ls myminio/
+# Bronze
+docker compose exec pipeline python -c "from etl.bronze_loader import load_sample_data; load_sample_data()"
 
-# Listar files no bronze bucket
-docker-compose exec minio mc ls myminio/bronze/
+# Silver (conversão CSV/GeoJSON)
+docker compose exec pipeline python -c "from etl.silver.csv_geojson_converter import run_conversion; run_conversion()"
 
-# Download file
-docker-compose exec minio mc cp myminio/bronze/flooding_areas_porto_alegre.parquet .
+# Silver (normalização)
+docker compose exec pipeline python -c "from etl.silver_processor import process_silver; process_silver()"
+
+# Gold
+docker compose exec pipeline python -c "from etl.gold_processor import process_gold; process_gold()"
+
+# PostGIS
+docker compose exec pipeline python -c "from etl.postgis_loader import load_to_postgis; load_to_postgis()"
 ```
 
-## 🗄️ Verificar dados no PostgreSQL
+## Volumes e Dados
+
+| Path no host | Path no container | Tipo | Descrição |
+|---|---|---|---|
+| `./data/bronze/` | `/data/bronze` | bind mount | Arquivos externos CSV/GeoJSON + dados gerados |
+| — | `/data/silver` | volume nomeado | Dados normalizados (subdir por caso de uso) |
+| — | `/data/gold` | volume nomeado | Dados processados (subdir por caso de uso) |
+| `postgres_data` | `/var/lib/postgresql/data` | volume nomeado | Banco de dados |
+
+> `data/bronze/` é um **bind mount** — arquivos colocados no host ficam imediatamente visíveis no container e no watcher.
+
+### Estrutura de subdiretórios por caso de uso
+
+```
+/data/bronze/enchentes_poa/    ← bind mount (./data/bronze/enchentes_poa/)
+/data/silver/enchentes_poa/    ← volume nomeado
+/data/gold/enchentes_poa/      ← volume nomeado
+```
+
+Tabelas PostGIS correspondentes: `enchentes_poa_citizens`, `enchentes_poa_flooding_areas`.
+
+### Inspecionar dados nos volumes
 
 ```bash
-# Acessar psql
-docker-compose exec postgis psql -U esteira_user -d esteira_geo
+# Listar arquivos bronze
+docker compose exec pipeline find /data/bronze/enchentes_poa -type f
+
+# Listar arquivos silver
+docker compose exec pipeline find /data/silver/enchentes_poa -type f
+
+# Inspecionar parquet gold
+docker compose exec pipeline python -c "
+import geopandas as gpd
+gdf = gpd.read_parquet('/data/gold/enchentes_poa/all_citizens_evaluated.parquet')
+print(f'Total: {len(gdf)}')
+print(gdf[['citizen_id','name','affected_by_flooding']].head())
+"
+```
+
+## Verificar dados no PostgreSQL
+
+```bash
+docker compose exec postgis psql -U esteira_user -d esteira_geo
 
 # Dentro do psql:
-\dt                          # List tables
-SELECT COUNT(*) FROM citizens;  # Count citizens
-SELECT COUNT(*) FROM flooding_areas;  # Count flooding areas
-
-# Query com spatial join
-SELECT c.citizen_id, c.name, fa.area_name, c.geometry 
-FROM citizens c 
-LEFT JOIN flooding_areas fa ON ST_Contains(fa.geometry, c.geometry)
-LIMIT 10;
-
-# Statistics view
-SELECT * FROM v_citizens_summary;
-
-# Sair
+\dt                                                        -- listar tabelas
+SELECT COUNT(*) FROM enchentes_poa_citizens;               -- total cidadãos
+SELECT COUNT(*) FROM enchentes_poa_flooding_areas;         -- áreas de enchente
+SELECT citizen_id, name, affected_by_flooding FROM enchentes_poa_citizens LIMIT 5;
 \q
 ```
 
-## 📝 Arquivos de Dados Locais
+## Verificar dados no MinIO
 
-Os dados processados são salvos em volumes Docker:
+1. Abra http://localhost:9001
+2. Login: `minioadmin` / `minioadmin123`
+3. Buckets disponíveis:
+   - `bronze/` — dados brutos
+   - `silver/` — dados normalizados
+   - `gold/` — dados processados (affected/unaffected/all)
 
-```
-projeto/
-├─ .docker/     (volumes de dados)
-│  ├─ bronze/   (dados brutos GeoParquet)
-│  ├─ silver/   (dados normalizados)
-│  └─ gold/     (dados processados)
-├─ logs/
-│  ├─ pipeline/
-│  └─ flask/
-```
+## Troubleshooting
 
-Para acessar:
+### Rebuild após mudanças no código
 
 ```bash
-# Copiar arquivo do container para host
-docker cp esteira-pipeline:/data/bronze/flooding_areas_porto_alegre.parquet ./
-
-# Visualizar em Python
-import geopandas as gpd
-gdf = gpd.read_parquet('flooding_areas_porto_alegre.parquet')
-print(gdf)
-```
-
-## 🧪 Testes Automatizados
-
-Execute testes em diferentes camadas:
-
-```bash
-# Setup venv no pipeline container
-docker-compose exec pipeline bash -c "python -m venv /app/venv && . /app/venv/bin/activate && pip install -r /app/pipeline/requirements.txt"
-
-# Bronze layer test
-docker-compose exec pipeline bash -c "cd /app && python -c 'from pipeline.etl.bronze_loader import load_sample_data; load_sample_data()'"
-
-# Validar dados Bronze -> Silver -> Gold
-docker-compose exec pipeline bash -c "cd /app && python pipeline/main.py"
-```
-
-Ou use o arquivo de testes:
-
-```bash
-# Copiar arquivo de testes para working dir
-docker cp pipeline/testes_e_validacoes.txt esteira-pipeline:/app/
-
-# Executar linha por linha
-docker-compose exec pipeline bash
-```
-
-## 🔧 Troubleshooting
-
-### PostgreSQL não conecta
-
-```bash
-# Check health
-docker-compose exec postgis pg_isready -U esteira_user
-
-# Check logs
-docker-compose logs postgis
-```
-
-### MinIO requer inicialização
-
-```bash
-# Forçar recriação do container minio
-docker-compose up -d --force-recreate minio
-```
-
-### Pipeline container não executa
-
-```bash
-# Check logs
-docker-compose logs pipeline
-
-# Acessar e debugar
-docker-compose exec pipeline bash
-cd /app
-python pipeline/main.py  # Executar manualmente
+docker compose build pipeline pipeline-watcher
+docker compose up -d pipeline pipeline-watcher
 ```
 
 ### Limpar tudo e recomeçar
 
 ```bash
-# Parar todos containers
-docker-compose down
-
-# Remover volumes (cuidado: deleta dados!)
-docker-compose down -v
-
-# Reconstruir imagens
-docker-compose build --no-cache
-
-# Reiniciar
-docker-compose up -d
+docker compose down -v        # para containers e remove volumes (apaga dados!)
+docker compose build --no-cache
+docker compose up -d
 ```
 
-## 📦 Dependências Docker
+### Ver logs
 
-### Pipeline Container
-- Python 3.9
-- GeoPandas, Rasterio, Fiona, Shapely
-- Psycopg2 (PostgreSQL client)
-- Boto3 (S3 client)
-- GDAL, GEOS, PROJ (libs geoespaciais)
+```bash
+docker compose logs -f pipeline          # logs do ETL
+docker compose logs -f pipeline-watcher  # logs do watcher
+docker compose logs -f web               # logs do Flask
+docker compose logs -f postgis           # logs do PostgreSQL
+```
 
-### Web Container
-- Python 3.9
-- Flask
-- Gunicorn
-- Psycopg2
-- GeoPandas (readonly queries)
+### PostGIS não atualiza após pipeline rodar
 
-## 🌍 Próximos passos
+Verifique se `pipeline-watcher` tem as variáveis de banco no `docker-compose.yml`:
 
-1. **Dev Local**: Use este setup Docker para desenvolvimento
-2. **Testes**: Execute testes com dados reais ou mocked
-3. **Deploy Cloud**: Use Terraform quando pronto (`terraform apply -var-file=envs/huawei-sp.tfvars`)
-4. **Produção**: Adapte python-env.yml do Ansible para os containers
+```yaml
+pipeline-watcher:
+  environment:
+    RDS_HOST: postgis
+    RDS_PORT: 5432
+    RDS_DB: esteira_geo
+    RDS_USER: esteira_user
+    RDS_PASSWORD: esteira_local_2025
+```
 
-## 📚 Arquivos Relacionados
+Sem `RDS_HOST`, o loader tenta conectar em `localhost` e falha silenciosamente.
 
-- `docker-compose.yml` - Orquestração de containers
-- `pipeline/Dockerfile` - Imagem do pipeline ETL
-- `pipeline/Dockerfile.web` - Imagem da Flask app
-- `.env.docker` - Variáveis de ambiente padrão
-- `pipeline/config.py` - Detecta modo storage (local/minio/s3)
-- `testes_e_validacoes.txt` - Guia de testes completo
+### Pipeline falha silenciosamente
+
+```bash
+docker compose exec pipeline python /app/main.py 2>&1
+```
+
+### PostgreSQL não conecta
+
+```bash
+docker compose exec postgis pg_isready -U esteira_user
+docker compose logs postgis
+```
+
+## Dependências
+
+### Pipeline Container (`Dockerfile`)
+- Python 3.9, GeoPandas, Shapely, Fiona, Rasterio
+- Psycopg2, Boto3, PyArrow, python-dotenv
+- GDAL, GEOS, PROJ
+
+### Web Container (`Dockerfile.web`)
+- Python 3.9, Flask, Gunicorn, Psycopg2, Folium
+- GDAL, GEOS, PROJ

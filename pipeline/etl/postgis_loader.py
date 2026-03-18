@@ -13,8 +13,8 @@ from psycopg2.extras import execute_values
 import logging
 from pathlib import Path
 from config import (
-    LOCAL_GOLD_PATH, RDS_HOST, RDS_PORT, RDS_DATABASE,
-    RDS_USER, RDS_PASSWORD,
+    LOCAL_GOLD_USE_CASE, LOCAL_SILVER_USE_CASE, USE_CASE,
+    RDS_HOST, RDS_PORT, RDS_DATABASE, RDS_USER, RDS_PASSWORD,
     AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, ALL_CITIZENS_FILE
 )
 
@@ -38,14 +38,31 @@ def get_db_connection():
         return None
 
 
-def create_tables(conn):
-    """Cria tabelas if not exists"""
+def _table(use_case: str, base: str) -> str:
+    """Retorna nome da tabela com prefixo do caso de uso: enchentes_poa_citizens"""
+    return f"{use_case}_{base}"
+
+
+def create_tables(conn, use_case: str):
+    """Cria tabelas do caso de uso se não existirem, com migração de citizen_id se necessário"""
     cursor = conn.cursor()
-    
+    t_citizens = _table(use_case, 'citizens')
+    t_areas = _table(use_case, 'flooding_areas')
+
+    # Migrar citizen_id de INTEGER para VARCHAR se necessário
+    cursor.execute("""
+        SELECT data_type FROM information_schema.columns
+        WHERE table_name = %s AND column_name = 'citizen_id'
+    """, (t_citizens,))
+    row = cursor.fetchone()
+    if row and row[0] != 'character varying':
+        logger.info(f"Migrando {t_citizens}.citizen_id de INTEGER para VARCHAR...")
+        cursor.execute(f"DROP TABLE IF EXISTS {t_citizens} CASCADE")
+        conn.commit()
+
     sql_commands = [
-        # Tabela de áreas de enchente
-        """
-        CREATE TABLE IF NOT EXISTS flooding_areas (
+        f"""
+        CREATE TABLE IF NOT EXISTS {t_areas} (
             area_id SERIAL PRIMARY KEY,
             area_name VARCHAR(255),
             flood_date DATE,
@@ -55,12 +72,10 @@ def create_tables(conn):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,
-        
-        # Tabela de cidadãos
-        """
-        CREATE TABLE IF NOT EXISTS citizens (
-            citizen_id INTEGER PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
+        f"""
+        CREATE TABLE IF NOT EXISTS {t_citizens} (
+            citizen_id VARCHAR(50) PRIMARY KEY,
+            name VARCHAR(255),
             address TEXT,
             phone VARCHAR(20),
             registration_date DATE,
@@ -69,193 +84,124 @@ def create_tables(conn):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,
-        
-        # Índices espaciais
-        "CREATE INDEX IF NOT EXISTS idx_flooding_areas_geom ON flooding_areas USING GIST(geometry)",
-        "CREATE INDEX IF NOT EXISTS idx_citizens_geom ON citizens USING GIST(geometry)",
+        f"CREATE INDEX IF NOT EXISTS idx_{use_case}_areas_geom ON {t_areas} USING GIST(geometry)",
+        f"CREATE INDEX IF NOT EXISTS idx_{use_case}_citizens_geom ON {t_citizens} USING GIST(geometry)",
     ]
-    
+
     for sql in sql_commands:
         try:
             cursor.execute(sql)
-            logger.info(f"✓ Tabela criada/verificada")
         except psycopg2.Error as e:
             logger.warning(f"⚠ Erro ao criar tabela: {e}")
-    
+
     conn.commit()
     cursor.close()
+    logger.info(f"✓ Tabelas {t_areas}, {t_citizens} criadas/verificadas")
 
 
-def load_affected_citizens_to_postgis(conn, filepath):
-    """Carrega cidadãos afetados no PostGIS"""
-    logger.info(f"Carregando cidadãos afetados para PostGIS...")
-    
+def load_citizens_to_postgis(conn, filepath, affected: bool, use_case: str):
+    """Carrega cidadãos (afetados ou não) na tabela do caso de uso"""
+    label = 'afetados' if affected else 'não afetados'
+    logger.info(f"Carregando cidadãos {label} para PostGIS...")
+
     gdf = gpd.read_parquet(filepath)
+    t = _table(use_case, 'citizens')
     cursor = conn.cursor()
-    
-    # Limpar dados antigos
-    cursor.execute("DELETE FROM citizens WHERE affected_by_flooding = TRUE")
-    
-    for idx, row in gdf.iterrows():
-        sql = """
-            INSERT INTO citizens (citizen_id, name, address, phone, registration_date, geometry, affected_by_flooding)
+    cursor.execute(f"DELETE FROM {t} WHERE affected_by_flooding = %s", (affected,))
+
+    for _, row in gdf.iterrows():
+        cursor.execute(
+            f"""
+            INSERT INTO {t} (citizen_id, name, address, phone, registration_date, geometry, affected_by_flooding)
             VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)
-            ON CONFLICT (citizen_id) DO UPDATE SET affected_by_flooding = TRUE
-        """
-        
-        geom_wkt = f"POINT({row.geometry.x} {row.geometry.y})"
-        
-        cursor.execute(sql, (
-            int(row['citizen_id']),
-            str(row['name']),
-            str(row['address']),
-            str(row['phone']),
-            row['registration_date'],
-            geom_wkt,
-            True
-        ))
-    
+            ON CONFLICT (citizen_id) DO UPDATE SET affected_by_flooding = EXCLUDED.affected_by_flooding
+            """,
+            (
+                str(row['citizen_id']),
+                str(row['name']),
+                str(row.get('address', 'N/A')),
+                str(row.get('phone', 'N/A')),
+                row.get('registration_date', None),
+                f"POINT({row.geometry.x} {row.geometry.y})",
+                affected,
+            )
+        )
+
     conn.commit()
     cursor.close()
-    logger.info(f"✓ Carregados {len(gdf)} cidadãos afetados")
+    logger.info(f"✓ Carregados {len(gdf)} cidadãos {label}")
 
 
-def load_unaffected_citizens_to_postgis(conn, filepath):
-    """Carrega cidadãos não afetados no PostGIS"""
-    logger.info(f"Carregando cidadãos não afetados para PostGIS...")
-    
-    gdf = gpd.read_parquet(filepath)
+def query_statistics(conn, use_case: str):
+    """Retorna estatísticas do caso de uso"""
+    t = _table(use_case, 'citizens')
     cursor = conn.cursor()
-    
-    # Limpar dados antigos (não afetados)
-    cursor.execute("DELETE FROM citizens WHERE affected_by_flooding = FALSE")
-    
-    for idx, row in gdf.iterrows():
-        sql = """
-            INSERT INTO citizens (citizen_id, name, address, phone, registration_date, geometry, affected_by_flooding)
-            VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)
-            ON CONFLICT (citizen_id) DO UPDATE SET affected_by_flooding = FALSE
-        """
-        
-        geom_wkt = f"POINT({row.geometry.x} {row.geometry.y})"
-        
-        cursor.execute(sql, (
-            int(row['citizen_id']),
-            str(row['name']),
-            str(row['address']),
-            str(row['phone']),
-            row['registration_date'],
-            geom_wkt,
-            False
-        ))
-    
-    conn.commit()
-    cursor.close()
-    logger.info(f"✓ Carregados {len(gdf)} cidadãos não afetados")
-
-
-def query_statistics(conn):
-    """Retorna estatísticas do banco de dados"""
-    cursor = conn.cursor()
-    
-    stats = {}
-    
-    # Total de cidadãos
-    cursor.execute("SELECT COUNT(*) FROM citizens")
-    stats['total_citizens'] = cursor.fetchone()[0]
-    
-    # Cidadãos afetados
-    cursor.execute("SELECT COUNT(*) FROM citizens WHERE affected_by_flooding = TRUE")
+    cursor.execute(f"SELECT COUNT(*) FROM {t}")
+    stats = {'total_citizens': cursor.fetchone()[0]}
+    cursor.execute(f"SELECT COUNT(*) FROM {t} WHERE affected_by_flooding = TRUE")
     stats['affected_citizens'] = cursor.fetchone()[0]
-    
-    # Cidadãos não afetados
-    cursor.execute("SELECT COUNT(*) FROM citizens WHERE affected_by_flooding = FALSE")
+    cursor.execute(f"SELECT COUNT(*) FROM {t} WHERE affected_by_flooding = FALSE")
     stats['unaffected_citizens'] = cursor.fetchone()[0]
-    
     cursor.close()
     return stats
 
 
-def load_flooding_areas_to_postgis(conn):
-    """Carrega áreas de enchente da Silver para PostGIS"""
+def load_flooding_areas_to_postgis(conn, use_case: str):
+    """Carrega áreas de enchente da Silver para a tabela do caso de uso"""
     logger.info("Carregando áreas de enchente para PostGIS...")
-    
     try:
-        # Carregar GeoDataFrame da Silver
-        from config import LOCAL_SILVER_PATH
-        silver_path = Path(LOCAL_SILVER_PATH) / "silver_flooding_areas_porto_alegre.parquet"
-        
+        silver_path = Path(LOCAL_SILVER_USE_CASE) / "silver_flooding_areas_porto_alegre.parquet"
         gdf = gpd.read_parquet(str(silver_path))
+        t = _table(use_case, 'flooding_areas')
         cursor = conn.cursor()
-        
-        # Limpar dados antigos
-        cursor.execute("DELETE FROM flooding_areas")
-        
+        cursor.execute(f"DELETE FROM {t}")
         for idx, row in gdf.iterrows():
-            # Converter geometria para WKT
-            geom_wkt = row.geometry.wkt
-            
-            sql = """
-                INSERT INTO flooding_areas (area_name, flood_date, severity, affected_population, geometry)
+            cursor.execute(
+                f"""
+                INSERT INTO {t} (area_name, flood_date, severity, affected_population, geometry)
                 VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326))
-            """
-            
-            cursor.execute(sql, (
-                str(row.get('area_name', f'Area_{idx}')),
-                row.get('flood_date', None),
-                str(row.get('severity', 'unknown')),
-                int(row.get('affected_population', 0)) if 'affected_population' in row else 0,
-                geom_wkt
-            ))
-        
+                """,
+                (
+                    str(row.get('area_name', f'Area_{idx}')),
+                    row.get('flood_date', None),
+                    str(row.get('severity', 'unknown')),
+                    int(row.get('affected_population', 0)) if 'affected_population' in row else 0,
+                    row.geometry.wkt,
+                )
+            )
         conn.commit()
         cursor.close()
         logger.info(f"✓ Carregadas {len(gdf)} áreas de enchente")
         return len(gdf)
-        
     except Exception as e:
         logger.error(f"✗ Erro ao carregar áreas de enchente: {e}")
         return 0
 
 
 def load_to_postgis():
-    """Orquestrador: carrega dados no PostGIS"""
+    """Orquestrador: carrega dados do caso de uso no PostGIS"""
     logger.info("=" * 60)
-    logger.info("POSTGIS LOADER - Importando dados no banco")
+    logger.info(f"POSTGIS LOADER - Caso de uso: {USE_CASE}")
     logger.info("=" * 60)
-    
-    # Conectar
+
     conn = get_db_connection()
     if not conn:
         logger.error("✗ Não foi possível conectar ao banco de dados!")
         return False
-    
+
     try:
-        # Criar tabelas
-        create_tables(conn)
-        
-        # Carregar dados de enchentes PRIMEIRO
-        load_flooding_areas_to_postgis(conn)
-        
-        # Carregar dados de cidadãos
-        affected_path = Path(LOCAL_GOLD_PATH) / AFFECTED_CITIZENS_FILE
-        unaffected_path = Path(LOCAL_GOLD_PATH) / UNAFFECTED_CITIZENS_FILE
-        
-        load_affected_citizens_to_postgis(conn, str(affected_path))
-        load_unaffected_citizens_to_postgis(conn, str(unaffected_path))
-        
-        # Retornar estatísticas
-        stats = query_statistics(conn)
+        create_tables(conn, USE_CASE)
+        load_flooding_areas_to_postgis(conn, USE_CASE)
+        load_citizens_to_postgis(conn, str(Path(LOCAL_GOLD_USE_CASE) / AFFECTED_CITIZENS_FILE), True, USE_CASE)
+        load_citizens_to_postgis(conn, str(Path(LOCAL_GOLD_USE_CASE) / UNAFFECTED_CITIZENS_FILE), False, USE_CASE)
+
+        stats = query_statistics(conn, USE_CASE)
         logger.info("=" * 60)
-        logger.info("✓ Dados carregados no PostGIS!")
-        logger.info(f"  Total: {stats['total_citizens']} cidadãos")
-        logger.info(f"  Afetados: {stats['affected_citizens']}")
-        logger.info(f"  Não afetados: {stats['unaffected_citizens']}")
+        logger.info(f"✓ Dados carregados no PostGIS! (tabelas: {USE_CASE}_citizens, {USE_CASE}_flooding_areas)")
+        logger.info(f"  Total: {stats['total_citizens']} | Afetados: {stats['affected_citizens']} | Não afetados: {stats['unaffected_citizens']}")
         logger.info("=" * 60)
-        
         conn.close()
         return True
-        
     except Exception as e:
         logger.error(f"✗ Erro ao carregar dados: {e}")
         conn.close()

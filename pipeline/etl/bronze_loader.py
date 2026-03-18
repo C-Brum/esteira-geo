@@ -16,7 +16,7 @@ from config import (
     SAMPLE_DATA_DIR, FLOODING_AREAS_FILE, CITIZENS_FILE,
     AWS_S3_BRONZE_BUCKET, S3_BRONZE_PREFIX,
     USE_MINIO, USE_S3, STORAGE_MODE,
-    AWS_ENDPOINT_URL, LOCAL_BRONZE_PATH
+    AWS_ENDPOINT_URL, LOCAL_BRONZE_USE_CASE
 )
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ def create_citizens_geoparquet():
 def save_to_geoparquet(gdf, filename):
     """Salva GeoDataFrame como GeoParquet na camada Bronze"""
     import os
-    filepath = f"{LOCAL_BRONZE_PATH}/{filename}"
+    filepath = f"{LOCAL_BRONZE_USE_CASE}/{filename}"
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     gdf.to_parquet(filepath)
     logger.info(f"✓ Salvo: {filepath}")
@@ -198,7 +198,7 @@ def load_sample_data():
     
     # Criar diretório de dados se não existir
     import os
-    os.makedirs(SAMPLE_DATA_DIR, exist_ok=True)
+    os.makedirs(LOCAL_BRONZE_USE_CASE, exist_ok=True)
     
     # Gerar dados de exemplo
     flooding_gdf = create_flooding_areas_geoparquet()
@@ -210,7 +210,7 @@ def load_sample_data():
     
     # Também salvar formatos adicionais esperados pelo conversor (CSV / GeoJSON)
     # Flooding areas → GeoJSON
-    flooding_geojson = f"{LOCAL_BRONZE_PATH}/{FLOODING_AREAS_FILE.rsplit('.', 1)[0]}.geojson"
+    flooding_geojson = f"{LOCAL_BRONZE_USE_CASE}/{FLOODING_AREAS_FILE.rsplit('.', 1)[0]}.geojson"
     try:
         flooding_gdf.to_file(flooding_geojson, driver='GeoJSON')
         logger.info(f"✓ Salvo: {flooding_geojson}")
@@ -219,8 +219,8 @@ def load_sample_data():
         logger.warning(f"Não foi possível salvar GeoJSON de áreas: {e}")
 
     # Citizens → CSV + GeoJSON
-    citizens_csv = f"{LOCAL_BRONZE_PATH}/{CITIZENS_FILE.rsplit('.', 1)[0]}.csv"
-    citizens_geojson = f"{LOCAL_BRONZE_PATH}/{CITIZENS_FILE.rsplit('.', 1)[0]}.geojson"
+    citizens_csv = f"{LOCAL_BRONZE_USE_CASE}/{CITIZENS_FILE.rsplit('.', 1)[0]}.csv"
+    citizens_geojson = f"{LOCAL_BRONZE_USE_CASE}/{CITIZENS_FILE.rsplit('.', 1)[0]}.geojson"
     try:
         # Criar DataFrame com colunas lat/lon para CSV
         citizens_df = citizens_gdf.copy()

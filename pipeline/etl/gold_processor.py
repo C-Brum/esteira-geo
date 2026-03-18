@@ -12,7 +12,7 @@ import pandas as pd
 import logging
 from pathlib import Path
 from config import (
-    LOCAL_SILVER_PATH, LOCAL_GOLD_PATH,
+    LOCAL_SILVER_USE_CASE, LOCAL_GOLD_USE_CASE,
     AWS_S3_GOLD_BUCKET, S3_GOLD_PREFIX,
     AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, ALL_CITIZENS_FILE
 )
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def load_from_silver(filename):
     """Carrega arquivos da camada Silver"""
-    filepath = Path(LOCAL_SILVER_PATH) / filename
+    filepath = Path(LOCAL_SILVER_USE_CASE) / filename
     logger.info(f"Carregando Silver: {filepath}")
     gdf = gpd.read_parquet(filepath)
     logger.info(f"✓ Carregado: {len(gdf)} registros")
@@ -86,6 +86,7 @@ def generate_affected_citizens(gdf):
     ]
     
     affected = affected[[col for col in columns_to_keep if col in affected.columns]]
+    affected = affected.drop_duplicates(subset=['citizen_id'], keep='first')
     affected['processing_date'] = pd.Timestamp.now()
     
     logger.info(f"✓ Gerado: {len(affected)} cidadãos afetados")
@@ -108,6 +109,7 @@ def generate_unaffected_citizens(gdf):
     ]
     
     unaffected = unaffected[[col for col in columns_to_keep if col in unaffected.columns]]
+    unaffected = unaffected.drop_duplicates(subset=['citizen_id'], keep='first')
     unaffected['processing_date'] = pd.Timestamp.now()
     
     logger.info(f"✓ Gerado: {len(unaffected)} cidadãos não afetados")
@@ -130,6 +132,11 @@ def generate_all_citizens_summary(gdf):
     ]
     
     all_citizens = all_citizens[[col for col in columns_to_keep if col in all_citizens.columns]]
+    
+    # Deduplicar: manter afetado se cidadão caiu em mais de uma área
+    all_citizens = all_citizens.sort_values('affected_by_flooding', ascending=False)
+    all_citizens = all_citizens.drop_duplicates(subset=['citizen_id'], keep='first')
+    
     all_citizens['processing_date'] = pd.Timestamp.now()
     
     # Adicionar estatísticas
@@ -142,17 +149,24 @@ def generate_all_citizens_summary(gdf):
 
 def save_to_gold(gdf, filename):
     """Salva dados processados na camada Gold"""
-    filepath = Path(LOCAL_GOLD_PATH) / filename
+    filepath = Path(LOCAL_GOLD_USE_CASE) / filename
     filepath.parent.mkdir(parents=True, exist_ok=True)
     gdf.to_parquet(str(filepath))
     logger.info(f"✓ Salvo Gold: {filepath}")
-    
-    # Upload S3 (opcional)
+
+    # Upload S3/MinIO
     try:
         import boto3
-        s3 = boto3.client('s3')
+        import os
+        client_kwargs = {}
+        endpoint_url = os.getenv('AWS_ENDPOINT_URL')
+        if endpoint_url:
+            client_kwargs['endpoint_url'] = endpoint_url
+            client_kwargs['aws_access_key_id'] = os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin')
+            client_kwargs['aws_secret_access_key'] = os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin123')
+        s3 = boto3.client('s3', **client_kwargs)
         s3_key = f"{S3_GOLD_PREFIX}{filename}"
-        s3.upload_file(filepath, AWS_S3_GOLD_BUCKET, s3_key)
+        s3.upload_file(str(filepath), AWS_S3_GOLD_BUCKET, s3_key)
         logger.info(f"✓ Upload S3: s3://{AWS_S3_GOLD_BUCKET}/{s3_key}")
     except Exception as e:
         logger.warning(f"⚠ Upload S3 falhou: {e}")

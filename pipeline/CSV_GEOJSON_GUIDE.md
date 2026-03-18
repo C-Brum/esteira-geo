@@ -1,203 +1,64 @@
 # CSV/GeoJSON Integration Guide
 
-## 📊 Visão Geral
+## Visão Geral
 
-O pipeline agora suporta ingestão de dados em múltiplos formatos:
+O pipeline aceita arquivos externos em `data/bronze/<caso_de_uso>/` além dos dados gerados sinteticamente. Qualquer CSV ou GeoJSON colocado nessa pasta é automaticamente detectado pelo watcher, convertido para GeoParquet e consolidado na camada Silver antes do batimento geoespacial.
 
-### Formatos Suportados
+## Formatos Suportados
 
-| Formato | Uso | Serialização |
-|---------|-----|-----------------|
-| **CSV** | Dados tabulares com lat/lon | GeoParquet |
-| **GeoJSON** | Dados geoespaciais estruturados | GeoParquet |
-| **GeoParquet** | Dados geoespaciais otimizados | Mantém |
+| Formato | Requisito | Resultado |
+|---------|-----------|-----------|
+| CSV | Colunas `latitude` e `longitude` | `GEOMETRY(POINT, EPSG:4326)` |
+| GeoJSON | `FeatureCollection` válido | Preserva geometria original |
 
----
-
-## 🎯 Arquitetura de Dados
+## Fluxo de Dados
 
 ```
-INPUT (Múltiplas Fontes)
-    │
-    ├─ CSV com coordenadas
-    │  └─ citizens_sample.csv (50 cidadãos)
-    │
-    ├─ GeoJSON (Polygons)
-    │  └─ flooding_areas.geojson (3 áreas de enchente)
-    │
-    └─ GeoJSON (Points)
-       └─ citizens_additional.geojson (5 cidadãos adicionais)
-           │
-           ▼
-    BRONZE LAYER (Dados Brutos)
-        │
-        ├─ CSV → GeoParquet
-        │  └─ citizens_sample.parquet
-        │
-        └─ GeoJSON → GeoParquet
-           ├─ flooding_areas.parquet
-           └─ citizens_additional.parquet
-               │
-               ▼
-    SILVER LAYER (Normalizados)
-        │
-        ├─ Validação de geometrias
-        ├─ Padronização de tipos (int64, datetime)
-        ├─ Remoção de duplicatas
-        ├─ Metadados (_processed_date, _source_type, _data_quality)
-        │
-        └─ Saída: GeoParquet unificado
-           │
-           ▼
-    GOLD LAYER (Processado)
-        │
-        ├─ Spatial Join (ST_Contains)
-        ├─ Identificação de afetados/não-afetados
-        │
-        └─ Saída: Resultados de batimento geográfico
-           │
-           ▼
-    POSTGIS (Banco de Dados)
-        │
-        └─ Tabelas com índices GIST
+data/bronze/enchentes_poa/
+  ├── citizens_sample.csv       → silver/enchentes_poa/citizens_sample.parquet
+  ├── novos_pontos_a.csv        → silver/enchentes_poa/novos_pontos_a.parquet
+  ├── novos_pontos_b.geojson    → silver/enchentes_poa/novos_pontos_b.parquet
+  └── ...
+        ↓
+  [csv_geojson_converter]  converte e salva em /data/silver/enchentes_poa/
+        ↓
+  [silver_processor]  normaliza dados sintéticos + consolida externos
+        ↓
+  silver/enchentes_poa/silver_citizens_data.parquet  (todos unificados, sem duplicatas)
+        ↓
+  [gold_processor]  spatial join
+        ↓
+  gold/enchentes_poa/{affected,unaffected,all_citizens_evaluated}.parquet
+        ↓
+  PostGIS (enchentes_poa_citizens, enchentes_poa_flooding_areas) + Flask
 ```
 
----
+## Como Adicionar Dados
 
-## 📂 Estrutura de Dados
+### CSV
 
-### Diretório /pipeline/data/
-
-```
-pipeline/data/
-├─ citizens_sample.csv           # Dados tabulares de cidadãos (CSV)
-├─ flooding_areas.geojson        # Polígonos de enchente (GeoJSON)
-└─ citizens_additional.geojson   # Cidadãos adicionais (GeoJSON)
-```
-
-### Camada Bronze (`/pipeline/etl/bronze/`)
-
-Após processamento, contém:
-```
-bronze/
-├─ citizens_sample.parquet
-├─ flooding_areas.parquet
-└─ citizens_additional.parquet
-```
-
-### Camada Silver (`/pipeline/etl/silver/`)
-
-Após normalização:
-```
-silver/
-├─ citizens_sample_normalized.parquet
-├─ flooding_areas_normalized.parquet
-└─ citizens_additional_normalized.parquet
-```
-
----
-
-## 🔄 Pipeline Completo
-
-### 1. **Bronze Layer** - Ingestão
-
-Leitura e conversão para GeoParquet:
-
-```python
-# CSV com coordenadas
-df = pd.read_csv('citizens_sample.csv')
-geometry = gpd.points_from_xy(df['longitude'], df['latitude'])
-gdf = gpd.GeoDataFrame(df, geometry=geometry, crs='EPSG:4326')
-
-# GeoJSON
-gdf = gpd.read_file('flooding_areas.geojson')
-
-# Salvar em GeoParquet
-gdf.to_parquet('bronze/flooding_areas.parquet')
-```
-
-### 2. **Silver Layer** - Normalização
-
-Validação e padronização:
-
-```python
-from etl.silver.csv_geojson_converter import CSVGeoJSONToGeoParquetConverter
-
-converter = CSVGeoJSONToGeoParquetConverter()
-
-# Processar CSV
-gdf = converter.process_csv_file(
-    'pipeline/data/citizens_sample.csv',
-    'pipeline/etl/silver/citizens_sample.parquet'
-)
-
-# Processar GeoJSON
-gdf = converter.process_geojson_file(
-    'pipeline/data/flooding_areas.geojson',
-    'pipeline/etl/silver/flooding_areas.parquet'
-)
-```
-
-**Transformações:**
-- ✓ Validação de geometrias
-- ✓ Conversão de tipos (int64, datetime)
-- ✓ Lowercase em strings
-- ✓ Adição de metadados (_processed_date, _source_type, _data_quality)
-- ✓ Remoção de duplicatas
-
-### 3. **Gold Layer** - Processamento
-
-Spatial Join e cálculos:
-
-```python
-from etl.gold_processor import process_gold
-
-affected, unaffected, summary = process_gold()
-
-# Resultados:
-# - affected: GeoDataFrame com cidadãos em áreas de enchente
-# - unaffected: GeoDataFrame com cidadãos seguros
-# - summary: Estatísticas (60 afetados, 40 não afetados, total 100)
-```
-
-### 4. **PostGIS Layer** - Persistência
-
-Carregamento em RDS/PostGIS:
-
-```python
-from etl.postgis_loader import load_to_postgis
-
-success = load_to_postgis()
-
-# Tabelas criadas:
-# - flooding_areas (GEOMETRY(POLYGON))
-# - citizens (GEOMETRY(POINT) com coluna 'affected_by_flooding')
-# - v_citizens_summary (VIEW com estatísticas)
-```
-
-### 5. **Presentation Layer** - Visualização
-
-Dashboard Flask com dados processados.
-
----
-
-## 📋 Exemplos de Dados
-
-### CSV Format (citizens_sample.csv)
+Requisitos mínimos:
 
 ```csv
-citizen_id,name,age,document_number,latitude,longitude,registered_date,city,district
-C001,João Silva,32,12345678901,-30.0326,-51.2093,2024-01-15,Porto Alegre,Centro
-C002,Maria Santos,28,23456789012,-30.0450,-51.3050,2024-01-20,Porto Alegre,Partenon
+citizen_id,name,latitude,longitude
+C092,João Silva,-30.0312,-51.2285
+C093,Maria Santos,-30.0354,-51.2201
 ```
 
-**Conversão:**
-- latitude/longitude → GEOMETRY(POINT, EPSG:4326)
-- registered_date → Timestamp
-- age → Integer
-- Restante → String (lowercase)
+Colunas opcionais reconhecidas:
+- `registered_date` → renomeado automaticamente para `registration_date`
+- `address`, `phone`, `age`, `document_number`, `city`, `district`
 
-### GeoJSON Format (flooding_areas.geojson)
+`citizen_id` aceita inteiros (`0`, `1`...) ou strings (`C003`, `C004`...).
+
+> `document_number` deve ser string — valores como `88899900123` são lidos com `dtype=str` para evitar conflito de schema no PyArrow.
+
+```bash
+cp meus_cidadaos.csv data/bronze/enchentes_poa/
+# watcher detecta em até 5s e dispara o pipeline automaticamente
+```
+
+### GeoJSON
 
 ```json
 {
@@ -205,185 +66,94 @@ C002,Maria Santos,28,23456789012,-30.0450,-51.3050,2024-01-20,Porto Alegre,Parte
   "features": [
     {
       "type": "Feature",
-      "properties": {
-        "area_id": "PA001",
-        "area_name": "Partenon",
-        "flood_date": "2024-05-01",
-        "severity": "high"
-      },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[[-51.30, -30.05], ... ]]
-      }
+      "properties": { "citizen_id": "C092", "name": "Ana Lima", "registration_date": "2024-07-01" },
+      "geometry": { "type": "Point", "coordinates": [-51.2285, -30.0312] }
     }
   ]
 }
 ```
 
-**Conversão:**
-- geometry.coordinates → GEOMETRY(POLYGON, EPSG:4326)
-- properties → Colunas da tabela
-- Mantém estrutura geométrica
-
----
-
-## 🚀 Executar Pipeline Completo
-
-### Opção 1: Via Docker (Recomendado)
+> Coordenadas no formato GeoJSON: `[longitude, latitude]`
 
 ```bash
-# Setup inicial
-./setup.sh
-
-# Executar pipeline
-./docker.sh pipeline
-
-# Ou com Make
-make pipeline
+cp novos_dados.geojson data/bronze/enchentes_poa/
+# watcher detecta em até 5s e dispara o pipeline automaticamente
 ```
 
-### Opção 2: Localmente (Python)
+## Casos de Uso (Subdiretórios)
+
+O pipeline é controlado pela variável `USE_CASE` (default: `enchentes_poa`). Cada caso de uso tem seus próprios subdiretórios e tabelas PostGIS:
+
+| Layer | Path |
+|-------|------|
+| Bronze | `data/bronze/<use_case>/` |
+| Silver | `/data/silver/<use_case>/` |
+| Gold | `/data/gold/<use_case>/` |
+| PostGIS | `<use_case>_citizens`, `<use_case>_flooding_areas` |
+
+Para criar um novo caso de uso:
 
 ```bash
-# Instalar dependências
-pip install geopandas geoparquet pandas shapely boto3 psycopg2
-
-# Executar
-python pipeline/main.py
+mkdir data/bronze/novo_caso/
+cp meus_dados.csv data/bronze/novo_caso/
+USE_CASE=novo_caso docker compose exec pipeline python /app/main.py
 ```
 
-### Opção 3: Step-by-Step
+## Normalização Automática
 
+O `csv_geojson_converter` aplica as seguintes transformações:
+
+- `document_number` e `citizen_id` lidos como string no CSV (`dtype=str`)
+- Colunas com nome contendo `date`, `data`, `timestamp` ou `dt_` são convertidas para `datetime`
+- `registered_date` → renomeado para `registration_date`
+- Geometrias inválidas são corrigidas com `buffer(0)`
+- Metadados adicionados: `_processed_date`, `_source_type`, `_data_quality`
+
+O `silver_processor` consolida os arquivos externos com os dados sintéticos:
+
+- Glob dinâmico em `silver/<use_case>/*.parquet` — qualquer arquivo sem prefixo `silver_` é consolidado automaticamente
+- Deduplicação por `citizen_id` (string) — cidadão presente em múltiplas fontes é mantido uma única vez
+- Colunas auxiliares com tipos mistos (`geometry_valid`, `_source_type`...) são removidas antes de salvar
+
+## Schema PostGIS
+
+Tabelas prefixadas pelo caso de uso. `citizen_id` é `VARCHAR(50)` para suportar IDs alfanuméricos:
+
+```sql
+-- Listar tabelas do caso de uso
+SELECT tablename FROM pg_tables WHERE tablename LIKE 'enchentes_poa_%';
+
+-- Consultar cidadãos
+SELECT citizen_id, name, affected_by_flooding
+FROM enchentes_poa_citizens LIMIT 5;
+-- citizen_id pode ser '0', '1', 'C003', 'C086'...
+
+-- Estatísticas
+SELECT
+    COUNT(*) as total,
+    COUNT(CASE WHEN affected_by_flooding THEN 1 END) as afetados
+FROM enchentes_poa_citizens;
+```
+
+## Troubleshooting
+
+**Erro: "Colunas 'latitude' ou 'longitude' não encontradas"**
+Verifique os nomes das colunas no CSV — devem ser exatamente `latitude` e `longitude`.
+
+**Erro: "Could not convert '...' with type str: tried to convert to int64"**
+O `document_number` estava sendo inferido como `int64`. Corrigido: o converter usa `dtype={'document_number': str, 'citizen_id': str}` no `pd.read_csv`.
+
+**Colunas de texto virando `NaT`**
+O converter converte apenas colunas cujo nome contém `date`, `data`, `timestamp` ou `dt_`. Se ainda ocorrer, verifique se o nome da coluna problemática contém algum desses termos.
+
+**Watcher não dispara o pipeline**
+O watcher compara `mtime` e `size` dos arquivos. Se o arquivo já existia quando o container subiu, use `touch` para atualizar o mtime:
 ```bash
-# Apenas conversão CSV/GeoJSON
-python -m pipeline.etl.silver.csv_geojson_converter
-
-# Apenas pipeline de batimento
-python pipeline/main.py
+touch data/bronze/enchentes_poa/meu_arquivo.csv
 ```
 
----
+**PostGIS não atualiza após pipeline rodar**
+Verifique se o serviço `pipeline-watcher` tem `RDS_HOST: postgis` no `docker-compose.yml`. Sem essa variável, o loader tenta conectar em `localhost` e falha silenciosamente.
 
-## ✅ Validações Executadas
-
-### Bronze Layer
-- [ ] Leitura de arquivo (CSV/GeoJSON válido)
-- [ ] Geometrias válidas e válidas em CRS EPSG:4326
-- [ ] Sem valores nulos em colunas críticas
-
-### Silver Layer
-- [ ] Validação de geometrias com buffer(0)
-- [ ] Tipos de dados padronizados
-- [ ] Metadados adicionados
-- [ ] Arquivo GeoParquet criado corretamente
-
-### Gold Layer
-- [ ] Spatial join sem perdas
-- [ ] Contagem de afetados/não-afetados correta
-- [ ] Geometrias preservadas
-
-### PostGIS Layer
-- [ ] Tabelas criadas com estrutura correta
-- [ ] Índices GIST criados
-- [ ] View de resumo funcionando
-
----
-
-## 🔧 Adicionar Novo Arquivo de Dados
-
-### Passo 1: Adicionar arquivo
-
-Coloque em `pipeline/data/`:
-- `seu_arquivo.csv` (com colunas latitude/longitude)
-- `seu_arquivo.geojson` (com geometrias válidas)
-
-### Passo 2: Executar conversão automática
-
-```bash
-# O pipeline detectará automaticamente novos arquivos
-python pipeline/main.py
-```
-
-Ou manualmente:
-
-```python
-from etl.silver.csv_geojson_converter import CSVGeoJSONToGeoParquetConverter
-
-converter = CSVGeoJSONToGeoParquetConverter()
-results = converter.process_all_files()
-```
-
-### Passo 3: Pipeline continua
-
-Dados são automaticamente:
-1. Convertidos para GeoParquet
-2. Normalizados
-3. Usados no Gold layer
-
----
-
-## 📊 Estatísticas Esperadas
-
-### Dados Atuais
-
-| Fonte | Tipo | Registros | Geometrias |
-|-------|------|-----------|-----------|
-| citizens_sample.csv | Point | 50 | Lat/Lon → Point |
-| flooding_areas.geojson | Polygon | 3 | Polygon |
-| citizens_additional.geojson | Point | 5 | Point |
-| **TOTAL** | Misto | **58** | **8 geometrias** |
-
-### Resultados do Batimento
-
-- **Cidadãos identificados**: 55 total
-- **Afetados por enchente**: ~33% (ST_Contains)
-- **Não afetados**: ~67%
-- **Taxa de sucesso**: 100% (sem erros de geometria)
-
----
-
-## 🐛 Troubleshooting
-
-### Erro: "Colunas 'latitude' ou 'longitude' não encontradas"
-
-**Solução**: Verifique nomes das colunas no CSV. A converter espera exatamente:
-- `latitude` e `longitude` (case-sensitive)
-
-Se tiver outros nomes, edite `csv_geojson_converter.py`:
-
-```python
-gdf = converter.process_csv_file(
-    'seu_arquivo.csv',
-    'output.parquet',
-    lat_col='seu_lat',      # ← Ajuste aqui
-    lon_col='seu_lon'       # ← Ajuste aqui
-)
-```
-
-### Erro: "GeoJSON inválido"
-
-**Solução**: Valide com https://geojson.io/
-
-Requere:
-- `type: "FeatureCollection"`
-- `features` array com objetos válidos
-- `geometry` presente em cada feature
-- Coordenadas no formato [longitude, latitude]
-
-### Erro: "Geometrias inválidas"
-
-**Solução**: O pipeline corrige automaticamente com `buffer(0)`.
-
-Se persistir:
-```python
-gdf['geometry'] = gdf['geometry'].apply(lambda x: x.buffer(0) if not x.is_valid else x)
-```
-
----
-
-## 📖 Referências
-
-- [GeoPandas Documentation](https://geopandas.org/)
-- [GeoJSON Spec](https://tools.ietf.org/html/rfc7946)
-- [GeoParquet Spec](https://github.com/opengeospatial/geoparquet)
-- [PostGIS Documentation](https://postgis.net/)
+**GeoJSON inválido**
+Valide em https://geojson.io/ — o arquivo deve ter `type: "FeatureCollection"` e coordenadas no formato `[longitude, latitude]`.

@@ -31,6 +31,16 @@ LOCAL_BRONZE_PATH = os.getenv('LOCAL_BRONZE_PATH', '/data/bronze')
 LOCAL_SILVER_PATH = os.getenv('LOCAL_SILVER_PATH', '/data/silver')
 LOCAL_GOLD_PATH = os.getenv('LOCAL_GOLD_PATH', '/data/gold')
 
+# ====== USE CASE CONFIGURATION ======
+# Subdiretório dentro de cada bucket/path para isolar o caso de uso
+USE_CASE = os.getenv('USE_CASE', 'enchentes_poa')
+LOCAL_BRONZE_USE_CASE = os.path.join(LOCAL_BRONZE_PATH, USE_CASE)
+LOCAL_SILVER_USE_CASE = os.path.join(LOCAL_SILVER_PATH, USE_CASE)
+LOCAL_GOLD_USE_CASE = os.path.join(LOCAL_GOLD_PATH, USE_CASE)
+S3_BRONZE_USE_CASE_PREFIX = f'bronze/{USE_CASE}/'
+S3_SILVER_USE_CASE_PREFIX = f'silver/{USE_CASE}/'
+S3_GOLD_USE_CASE_PREFIX = f'gold/{USE_CASE}/'
+
 # ====== DATABASE CONFIGURATION ======
 RDS_HOST = os.getenv('RDS_HOST', 'localhost')
 RDS_PORT = int(os.getenv('RDS_PORT', 5432))
@@ -46,14 +56,14 @@ os.makedirs(os.path.dirname(LOG_FILE) or '.', exist_ok=True)
 # ====== PIPELINE STRUCTURE ======
 SAMPLE_DATA_DIR = 'data'
 os.makedirs(SAMPLE_DATA_DIR, exist_ok=True)
-os.makedirs(LOCAL_BRONZE_PATH, exist_ok=True)
-os.makedirs(LOCAL_SILVER_PATH, exist_ok=True)
-os.makedirs(LOCAL_GOLD_PATH, exist_ok=True)
+os.makedirs(LOCAL_BRONZE_USE_CASE, exist_ok=True)
+os.makedirs(LOCAL_SILVER_USE_CASE, exist_ok=True)
+os.makedirs(LOCAL_GOLD_USE_CASE, exist_ok=True)
 
 # S3/MinIO paths (Medallion architecture)
-S3_BRONZE_PREFIX = 'bronze/'
-S3_SILVER_PREFIX = 'silver/'
-S3_GOLD_PREFIX = 'gold/'
+S3_BRONZE_PREFIX = f'bronze/{USE_CASE}/'
+S3_SILVER_PREFIX = f'silver/{USE_CASE}/'
+S3_GOLD_PREFIX = f'gold/{USE_CASE}/'
 
 # File names
 FLOODING_AREAS_FILE = 'flooding_areas_porto_alegre.parquet'
@@ -67,14 +77,15 @@ print(f"✓ Configuration loaded (Mode: {STORAGE_MODE.upper()})")
 print(f"  Storage: {STORAGE_MODE.upper()}")
 if USE_MINIO:
     print(f"    MinIO: {AWS_ENDPOINT_URL}")
-    print(f"    Buckets: {AWS_S3_BRONZE_BUCKET}, {AWS_S3_SILVER_BUCKET}, {AWS_S3_GOLD_BUCKET}")
+    print(f"    Buckets: {AWS_S3_BRONZE_BUCKET}/{USE_CASE}, {AWS_S3_SILVER_BUCKET}/{USE_CASE}, {AWS_S3_GOLD_BUCKET}/{USE_CASE}")
 elif USE_S3:
     print(f"    AWS S3 Region: {AWS_S3_REGION_NAME}")
-    print(f"    Buckets: {AWS_S3_BRONZE_BUCKET}, {AWS_S3_SILVER_BUCKET}, {AWS_S3_GOLD_BUCKET}")
+    print(f"    Buckets: {AWS_S3_BRONZE_BUCKET}/{USE_CASE}, {AWS_S3_SILVER_BUCKET}/{USE_CASE}, {AWS_S3_GOLD_BUCKET}/{USE_CASE}")
 else:
     print(f"    Local paths:")
-    print(f"      Bronze: {LOCAL_BRONZE_PATH}")
-    print(f"      Silver: {LOCAL_SILVER_PATH}")
-    print(f"      Gold: {LOCAL_GOLD_PATH}")
+    print(f"      Bronze: {LOCAL_BRONZE_USE_CASE}")
+    print(f"      Silver: {LOCAL_SILVER_USE_CASE}")
+    print(f"      Gold: {LOCAL_GOLD_USE_CASE}")
+print(f"  Use Case: {USE_CASE}")
 print(f"  Database: {RDS_HOST}:{RDS_PORT}/{RDS_DATABASE}")
 print(f"  Logging: {LOG_FILE}")

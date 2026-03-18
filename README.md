@@ -17,8 +17,24 @@ esteira-geo/
 │   │   └── huawei-sp.tfvars
 │   └── [main.tf, providers.tf, variables.tf, outputs.tf]
 ├── pipeline/              # Esteira de processamento em Python
-│   ├── main.py            # Script exemplo
+│   ├── etl/
+│   │   ├── bronze_loader.py
+│   │   ├── silver_processor.py
+│   │   ├── gold_processor.py
+│   │   ├── postgis_loader.py
+│   │   └── silver/
+│   │       └── csv_geojson_converter.py
+│   ├── watchers/
+│   │   └── watch_bronze.py
+│   ├── web/
+│   │   ├── app.py         # Flask (multi-caso-de-uso)
+│   │   └── templates/index.html
+│   ├── main.py            # Orquestrador principal
+│   ├── config.py          # Configuração (USE_CASE, paths, credenciais)
 │   └── requirements.txt
+├── data/
+│   └── bronze/
+│       └── enchentes_poa/ # Bind mount — arquivos CSV/GeoJSON externos
 ├── docs/                  # Documentação
 │   ├── terraform.md
 │   └── huawei-setup.md
@@ -50,19 +66,38 @@ O ambiente Docker simula toda a infraestrutura localmente (PostgreSQL + PostGIS 
 
 ```bash
 # 1. Iniciar todo o ambiente
-docker-compose up -d
+docker compose up -d
 
 # 2. Aguarde ~30 segundos para tudo ficar saudável
-docker-compose ps
+docker compose ps
 
 # 3. Executar pipeline ETL
-docker-compose exec pipeline python /app/pipeline/main.py
+docker compose exec pipeline python /app/main.py
 
 # 4. Acessar serviços
 # Dashboard Flask: http://localhost:5000
 # MinIO Console: http://localhost:9001 (user: minioadmin)
 # PostgreSQL: localhost:5432 (user: esteira_user)
 ```
+
+### Ingestão de Dados Externos
+
+Coloque arquivos CSV ou GeoJSON em `data/bronze/enchentes_poa/` para incluí-los no pipeline:
+
+```bash
+# Exemplo: adicionar CSV de cidadãos
+cp meus_cidadaos.csv data/bronze/enchentes_poa/
+
+# O watcher detecta automaticamente e dispara o pipeline (polling 5s)
+# Ou execute manualmente:
+docker compose exec pipeline python /app/main.py
+```
+
+**Formatos suportados:**
+- CSV com colunas `latitude` e `longitude`
+- GeoJSON (pontos ou polígonos)
+
+**Normalização automática:** `registered_date` → `registration_date` | `citizen_id` aceita inteiros ou strings (`C003`, `C004`...) | `document_number` sempre lido como string
 
 ### Windows PowerShell Helper
 
@@ -342,7 +377,7 @@ Bronze → Silver → Gold → PostGIS → Flask
 
 **Bronze**: Dados brutos (3 áreas de enchente + 100 cidadãos)
 **Silver**: Dados normalizados e validados  
-**Gold**: Resultado do batimento geoespacial (60 afetados + 40 não afetados)
+**Gold**: Resultado do batimento geoespacial — afetados + não afetados, sem duplicatas por citizen_id
 **PostGIS**: Armazenamento em RDS com índices espaciais
 **Flask**: APIs e dashboard
 
@@ -359,59 +394,59 @@ pip install -r requirements.txt
 $env:RDS_HOST = "<RDS_ENDPOINT>"
 $env:RDS_PASSWORD = "postgrespw"
 $env:AWS_S3_BRONZE_BUCKET = "esteira-geo-bronze-xxxxx"
+$env:USE_CASE = "enchentes_poa"
 
 # Executar pipeline completo
 python main.py
 
-# Resultado esperado:
+# Resultado esperado (com dados de exemplo incluídos):
 # ✓ PIPELINE CONCLUÍDO COM SUCESSO!
-#   Cidadãos Atingidos: 60
-#   Cidadãos Não Atingidos: 40
-#   Total Avaliado: 100
-#   Percentual Atingido: 60.0%
+#   Cidadãos Atingidos: 114
+#   Cidadãos Não Atingidos: 75
+#   Total Avaliado: 189
+#   Percentual Atingido: 60.3%
 ```
 
 ### 10.3 Testes do Pipeline
 
-Arquivo `pipeline/testes_e_validacoes.txt` contém 25+ testes:
+Veja [pipeline/TESTES_CSV_GEOJSON.md](./pipeline/TESTES_CSV_GEOJSON.md) para suite completa de testes.
 
-```bash
-# Testes unitários (Bronze, Silver, Gold, PostGIS)
-python etl/bronze_loader.py
-python etl/silver_processor.py
-python etl/gold_processor.py
-python etl/postgis_loader.py
+Arquivos de dados de teste disponíveis em `data/bronze/enchentes_poa/`:
 
-# Validações de dados
-python -c "
-import geopandas as gpd
-affected = gpd.read_parquet('pipeline/data/affected_citizens.parquet')
-print(f'Cidadãos afetados: {len(affected)}')
-print(affected[['citizen_id', 'name', 'area_name']].head())
-"
-```
+| Arquivo | Tipo | Cidadãos |
+|---------|------|----------|
+| `citizens_sample.csv` | CSV | C003–C052 (50) |
+| `novos_cidadaos_poa.csv` | CSV | C053–C067 (15) |
+| `novos_pontos_a.csv` | CSV | C068–C073 (6) |
+| `novos_pontos_b.geojson` | GeoJSON | C074–C079 (6) |
+| `novos_pontos_c.csv` | CSV | C080–C085 (6) |
+| `novos_pontos_d.geojson` | GeoJSON | C086–C091 (6) |
 
 ### 10.4 Verificar Dados no PostGIS
 
+Tabelas prefixadas pelo caso de uso (`enchentes_poa_citizens`, `enchentes_poa_flooding_areas`):
+
 ```bash
-# Conectar ao banco e executar queries
+# Conectar ao banco
 psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo
 
 # Dentro do psql:
-SELECT COUNT(*) as total_citizens FROM citizens;
-SELECT COUNT(*) as affected FROM citizens WHERE affected_by_flooding = TRUE;
+SELECT COUNT(*) as total_citizens FROM enchentes_poa_citizens;
+SELECT COUNT(*) as affected FROM enchentes_poa_citizens WHERE affected_by_flooding = TRUE;
 
 # Ver cidadãos afetados
-SELECT citizen_id, name, ST_AsText(geometry) FROM citizens 
+SELECT citizen_id, name, ST_AsText(geometry) FROM enchentes_poa_citizens
 WHERE affected_by_flooding = TRUE LIMIT 5;
 ```
 
 ### 10.5 Visualizar no Flask
 
 ```bash
-# Acessar endpoints no navegador
-curl http://<PRESENTATION_IP>/api/geometries
+curl http://<PRESENTATION_IP>/health
 curl http://<PRESENTATION_IP>/api/stats
+curl http://<PRESENTATION_IP>/api/stats?use_case=enchentes_poa
+curl http://<PRESENTATION_IP>/api/use_cases   # lista casos de uso disponíveis
+curl http://<PRESENTATION_IP>/api/geojson
 
 # Abrir dashboard
 # http://<PRESENTATION_IP>/
@@ -514,6 +549,9 @@ CREATE INDEX idx_geometries_geom ON geometries USING GIST(geometry);
 - [Terraform Setup](./docs/terraform.md)
 - [Huawei Cloud Setup](./docs/huawei-setup.md)
 - [Ansible Automation](./ansible/README.md)
+- [Docker Environment](./pipeline/DOCKER.md)
+- [CSV/GeoJSON Guide](./pipeline/CSV_GEOJSON_GUIDE.md)
+- [Testes e Validações](./pipeline/TESTES_CSV_GEOJSON.md)
 
 ---
 
@@ -528,9 +566,18 @@ terraform init -upgrade
 - Verifique credenciais exportadas: `echo $env:AWS_ACCESS_KEY_ID`
 - Confirme permissões na conta da nuvem
 
-**RDS não accessible**
+**RDS não acessível**
 - Verifique security group permite porta 5432
 - Confirme IP da VM está autorizado
+
+**PostGIS não atualiza após pipeline rodar (Docker)**
+- Verifique se `pipeline-watcher` tem `RDS_HOST: postgis` no `docker-compose.yml`
+- Sem essa variável o loader tenta `localhost` e falha silenciosamente
+
+**Watcher não detecta arquivo já existente**
+```bash
+touch data/bronze/enchentes_poa/meu_arquivo.csv
+```
 
 ---
 

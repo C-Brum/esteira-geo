@@ -66,10 +66,11 @@ services:
       RDS_NAME: esteira_geo
       RDS_USER: esteira_user
       RDS_PASSWORD: esteira_local_2025
+      USE_CASE: enchentes_poa
       PYTHONUNBUFFERED: 1
     volumes:
       - ./pipeline/data:/app/data
-      - pipeline_bronze:/data/bronze
+      - ./data/bronze:/data/bronze
       - pipeline_silver:/data/silver
       - pipeline_gold:/data/gold
     networks:
@@ -93,14 +94,15 @@ services:
       RDS_NAME: esteira_geo
       RDS_USER: esteira_user
       RDS_PASSWORD: esteira_local_2025
+      USE_CASE: enchentes_poa
       FLASK_ENV: development
       FLASK_APP: app.py
       PYTHONUNBUFFERED: 1
     ports:
       - "5000:5000"
     volumes:
-      - ./pipeline/ansible/roles/presentation/files/app.py:/app/app.py
-      - ./pipeline/ansible/roles/presentation/files/templates:/app/templates
+      - ./pipeline/web/app.py:/app/app.py
+      - ./pipeline/web/templates:/app/templates
       - ./logs/flask:/app/logs
     networks:
       - esteira-network
@@ -108,17 +110,25 @@ services:
 
   # Watcher: monitora /data/bronze e dispara pipeline automaticamente
   pipeline-watcher:
-    image: esteira-geo-pipeline
+    build:
+      context: .
+      dockerfile: pipeline/Dockerfile
     container_name: esteira-pipeline-watcher
     depends_on:
       pipeline:
         condition: service_started
     environment:
-      BRONZE_DIR: /data/bronze
+      BRONZE_DIR: /data/bronze/enchentes_poa
       POLL_INTERVAL: 5
+      USE_CASE: enchentes_poa
+      RDS_HOST: postgis
+      RDS_PORT: 5432
+      RDS_DB: esteira_geo
+      RDS_USER: esteira_user
+      RDS_PASSWORD: esteira_local_2025
     volumes:
       - ./pipeline/data:/app/data
-      - pipeline_bronze:/data/bronze
+      - ./data/bronze:/data/bronze
       - pipeline_silver:/data/silver
       - pipeline_gold:/data/gold
     networks:
@@ -130,8 +140,6 @@ volumes:
   postgres_data:
     driver: local
   minio_data:
-    driver: local
-  pipeline_bronze:
     driver: local
   pipeline_silver:
     driver: local
