@@ -46,7 +46,7 @@ def _list_bronze(s3) -> list[str]:
     keys = []
     for obj in resp.get('Contents', []):
         key = obj['Key']
-        if key.startswith(PROCESSED_PREFIX):
+        if PROCESSED_PREFIX and key.startswith(PROCESSED_PREFIX):
             continue
         filename = key.split('/')[-1]
         if not filename:
@@ -128,6 +128,9 @@ def _save_to_silver(s3, gdf: gpd.GeoDataFrame, filename: str):
 
 
 def _move_to_processed(s3, key: str):
+    if not PROCESSED_PREFIX:
+        logger.info(f"→ Modo exploratório: {key.split('/')[-1]} mantido no lugar")
+        return
     filename = key.split('/')[-1]
     dest = f"{PROCESSED_PREFIX}{filename}"
     s3.copy_object(Bucket=AWS_S3_BRONZE_BUCKET,
@@ -147,7 +150,11 @@ def silver_exists(filename: str) -> bool:
         return False
 
 
-def process_silver() -> dict:
+def process_silver(bronze_prefix: str = None, move_files: bool = True) -> dict:
+    """
+    bronze_prefix: sobrescreve BRONZE_PREFIX (usado pelo Jupyter para apontar para exploratorio/)
+    move_files: se False, não move arquivos para processados/ (modo exploratório)
+    """
     """
     Lê arquivos pendentes do bronze, normaliza e salva no silver.
 
@@ -159,10 +166,21 @@ def process_silver() -> dict:
     logger.info("SILVER PROCESSOR")
     logger.info("=" * 60)
 
+    # Suporte a modo exploratório: sobrescreve prefixos sem alterar variáveis de módulo
+    global BRONZE_PREFIX, PROCESSED_PREFIX
+    _bronze_prefix    = bronze_prefix or BRONZE_PREFIX
+    _processed_prefix = PROCESSED_PREFIX if move_files else None
+
+    # Aplica temporariamente
+    _orig_bronze, _orig_processed = BRONZE_PREFIX, PROCESSED_PREFIX
+    BRONZE_PREFIX    = _bronze_prefix
+    PROCESSED_PREFIX = _processed_prefix
+
     s3   = _s3()
     keys = _list_bronze(s3)
 
     if not keys:
+        BRONZE_PREFIX, PROCESSED_PREFIX = _orig_bronze, _orig_processed
         raise RuntimeError("Nenhum arquivo encontrado no bucket bronze para processar.")
 
     flooding_frames = []
@@ -238,8 +256,10 @@ def process_silver() -> dict:
         logger.info(f"✓ Cidadãos salvos no silver: {len(citizens_silver)} registros")
 
     if not result:
+        BRONZE_PREFIX, PROCESSED_PREFIX = _orig_bronze, _orig_processed
         raise RuntimeError("Nenhum arquivo válido processado do bronze.")
 
+    BRONZE_PREFIX, PROCESSED_PREFIX = _orig_bronze, _orig_processed
     logger.info("=" * 60)
     return result
 

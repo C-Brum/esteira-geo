@@ -1,9 +1,8 @@
 """
 Watcher S3/MinIO — Esteira Geo
 
-Monitora TODO o bucket bronze (sem prefix fixo).
-Detecta o use_case pelo prefixo do arquivo: <use_case>/arquivo.csv
-Dispara o pipeline com USE_CASE correto para cada grupo de arquivos.
+Monitora exclusivamente bronze/automatizado/<use_case>/.
+Arquivos em qualquer outro prefixo (ex: exploratorio/) são ignorados.
 """
 
 import os
