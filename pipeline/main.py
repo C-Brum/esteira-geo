@@ -13,23 +13,10 @@ import logging
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
 
-ENGINE = os.getenv("ENGINE", "python").lower()
-
-if ENGINE == "spark":
-    from etl.spark.silver_processor import process_silver_spark as process_silver
-    from etl.spark.gold_processor   import process_gold_spark   as process_gold
-    from etl.spark.postgis_loader   import load_to_postgis_spark as load_to_postgis
-else:
-    from etl.silver_processor import process_silver
-    from etl.gold_processor   import process_gold, silver_ready
-    from etl.postgis_loader   import load_to_postgis
-
-from config import (
-    AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, ALL_CITIZENS_FILE,
-    LOCAL_GOLD_USE_CASE,
-)
+from etl.silver_processor import process_silver
+from etl.gold_processor   import process_gold, silver_ready
+from etl.postgis_loader   import load_to_postgis
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +32,7 @@ logger = logging.getLogger(__name__)
 def main():
     logger.info("#" * 70)
     logger.info("# ESTEIRA GEO - Pipeline de Batimento Geográfico")
-    logger.info(f"# Engine: {ENGINE.upper()} | {datetime.now()}")
+    logger.info(f"# {datetime.now()}")
     logger.info("#" * 70)
 
     try:
