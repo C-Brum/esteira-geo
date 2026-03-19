@@ -138,6 +138,7 @@ services:
       - "8888:8888"
     volumes:
       - ./notebooks:/notebooks
+      - ./pipeline:/app/pipeline_src
       - ./data/bronze:/data/bronze
       - pipeline_silver:/data/silver
       - pipeline_gold:/data/gold
