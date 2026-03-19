@@ -1,67 +1,58 @@
 """
-PostGIS Loader - Importa dados processados no banco de dados PostgreSQL
+PostGIS Loader - Espelho do Gold
 
-Cria tabelas no PostGIS:
-- flooding_areas - polígonos de enchentes
-- citizens - pontos de cidadãos
-- citizens_affected_by_flood - vista com cidadãos afetados
+O PostGIS reflete exatamente o conteúdo do gold:
+- Cada execução faz TRUNCATE + INSERT (não acumula)
+- Se o gold não existir (bucket apagado), as tabelas são esvaziadas
 """
 
 import geopandas as gpd
 import psycopg2
-from psycopg2.extras import execute_values
 import logging
 from pathlib import Path
 from config import (
     LOCAL_GOLD_USE_CASE, LOCAL_SILVER_USE_CASE, USE_CASE,
+    AWS_S3_SILVER_BUCKET, AWS_S3_GOLD_BUCKET,
+    AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_REGION_NAME,
     RDS_HOST, RDS_PORT, RDS_DATABASE, RDS_USER, RDS_PASSWORD,
-    AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, ALL_CITIZENS_FILE
+    AFFECTED_CITIZENS_FILE, UNAFFECTED_CITIZENS_FILE, FLOODING_AREAS_FILE,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def get_db_connection():
-    """Cria conexão com PostgreSQL"""
+def _conn():
     try:
-        conn = psycopg2.connect(
-            host=RDS_HOST,
-            port=RDS_PORT,
-            database=RDS_DATABASE,
-            user=RDS_USER,
-            password=RDS_PASSWORD
-        )
-        logger.info(f"✓ Conectado ao PostgreSQL: {RDS_HOST}:{RDS_PORT}/{RDS_DATABASE}")
-        return conn
+        c = psycopg2.connect(host=RDS_HOST, port=RDS_PORT, database=RDS_DATABASE,
+                             user=RDS_USER, password=RDS_PASSWORD)
+        logger.info(f"✓ Conectado: {RDS_HOST}:{RDS_PORT}/{RDS_DATABASE}")
+        return c
     except psycopg2.Error as e:
-        logger.error(f"✗ Falha na conexão PostgreSQL: {e}")
+        logger.error(f"✗ Falha na conexão: {e}")
         return None
 
 
-def _table(use_case: str, base: str) -> str:
-    """Retorna nome da tabela com prefixo do caso de uso: enchentes_poa_citizens"""
-    return f"{use_case}_{base}"
+def _t(base: str) -> str:
+    return f"{USE_CASE}_{base}"
 
 
-def create_tables(conn, use_case: str):
-    """Cria tabelas do caso de uso se não existirem, com migração de citizen_id se necessário"""
-    cursor = conn.cursor()
-    t_citizens = _table(use_case, 'citizens')
-    t_areas = _table(use_case, 'flooding_areas')
+def _ensure_tables(conn):
+    t_areas    = _t('flooding_areas')
+    t_citizens = _t('citizens')
+    cur = conn.cursor()
 
-    # Migrar citizen_id de INTEGER para VARCHAR se necessário
-    cursor.execute("""
-        SELECT data_type FROM information_schema.columns
-        WHERE table_name = %s AND column_name = 'citizen_id'
+    # Recriar se schema desatualizado (citizen_id não-VARCHAR ou coluna updated_at ausente)
+    cur.execute("""
+        SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = %s AND column_name IN ('citizen_id', 'updated_at')
     """, (t_citizens,))
-    row = cursor.fetchone()
-    if row and row[0] != 'character varying':
-        logger.info(f"Migrando {t_citizens}.citizen_id de INTEGER para VARCHAR...")
-        cursor.execute(f"DROP TABLE IF EXISTS {t_citizens} CASCADE")
+    cols = {r[0]: r[1] for r in cur.fetchall()}
+    if cols.get('citizen_id') != 'character varying' or 'updated_at' not in cols:
+        cur.execute(f"DROP TABLE IF EXISTS {t_citizens} CASCADE")
         conn.commit()
+        logger.info(f"Tabela {t_citizens} recriada (migração de schema)")
 
-    sql_commands = [
-        f"""
+    cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {t_areas} (
             area_id SERIAL PRIMARY KEY,
             area_name VARCHAR(255),
@@ -69,10 +60,10 @@ def create_tables(conn, use_case: str):
             severity VARCHAR(50),
             affected_population INTEGER,
             geometry GEOMETRY(POLYGON, 4326),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
-        f"""
+    """)
+    cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {t_citizens} (
             citizen_id VARCHAR(50) PRIMARY KEY,
             name VARCHAR(255),
@@ -81,86 +72,38 @@ def create_tables(conn, use_case: str):
             registration_date DATE,
             geometry GEOMETRY(POINT, 4326),
             affected_by_flooding BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
-        f"CREATE INDEX IF NOT EXISTS idx_{use_case}_areas_geom ON {t_areas} USING GIST(geometry)",
-        f"CREATE INDEX IF NOT EXISTS idx_{use_case}_citizens_geom ON {t_citizens} USING GIST(geometry)",
-    ]
-
-    for sql in sql_commands:
-        try:
-            cursor.execute(sql)
-        except psycopg2.Error as e:
-            logger.warning(f"⚠ Erro ao criar tabela: {e}")
-
+    """)
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{USE_CASE}_areas_geom    ON {t_areas}    USING GIST(geometry)")
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{USE_CASE}_citizens_geom ON {t_citizens} USING GIST(geometry)")
     conn.commit()
-    cursor.close()
-    logger.info(f"✓ Tabelas {t_areas}, {t_citizens} criadas/verificadas")
+    cur.close()
 
 
-def load_citizens_to_postgis(conn, filepath, affected: bool, use_case: str):
-    """Carrega cidadãos (afetados ou não) na tabela do caso de uso"""
-    label = 'afetados' if affected else 'não afetados'
-    logger.info(f"Carregando cidadãos {label} para PostGIS...")
-
-    gdf = gpd.read_parquet(filepath)
-    t = _table(use_case, 'citizens')
-    cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {t} WHERE affected_by_flooding = %s", (affected,))
-
-    for _, row in gdf.iterrows():
-        cursor.execute(
-            f"""
-            INSERT INTO {t} (citizen_id, name, address, phone, registration_date, geometry, affected_by_flooding)
-            VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)
-            ON CONFLICT (citizen_id) DO UPDATE SET affected_by_flooding = EXCLUDED.affected_by_flooding
-            """,
-            (
-                str(row['citizen_id']),
-                str(row['name']),
-                str(row.get('address', 'N/A')),
-                str(row.get('phone', 'N/A')),
-                row.get('registration_date', None),
-                f"POINT({row.geometry.x} {row.geometry.y})",
-                affected,
-            )
-        )
-
-    conn.commit()
-    cursor.close()
-    logger.info(f"✓ Carregados {len(gdf)} cidadãos {label}")
+def _s3_client():
+    kwargs = {'region_name': AWS_S3_REGION_NAME}
+    if AWS_ENDPOINT_URL:      kwargs['endpoint_url']         = AWS_ENDPOINT_URL
+    if AWS_ACCESS_KEY_ID:     kwargs['aws_access_key_id']    = AWS_ACCESS_KEY_ID
+    if AWS_SECRET_ACCESS_KEY: kwargs['aws_secret_access_key']= AWS_SECRET_ACCESS_KEY
+    import boto3
+    return boto3.client('s3', **kwargs)
 
 
-def query_statistics(conn, use_case: str):
-    """Retorna estatísticas do caso de uso"""
-    t = _table(use_case, 'citizens')
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT COUNT(*) FROM {t}")
-    stats = {'total_citizens': cursor.fetchone()[0]}
-    cursor.execute(f"SELECT COUNT(*) FROM {t} WHERE affected_by_flooding = TRUE")
-    stats['affected_citizens'] = cursor.fetchone()[0]
-    cursor.execute(f"SELECT COUNT(*) FROM {t} WHERE affected_by_flooding = FALSE")
-    stats['unaffected_citizens'] = cursor.fetchone()[0]
-    cursor.close()
-    return stats
-
-
-def load_flooding_areas_to_postgis(conn, use_case: str):
-    """Carrega áreas de enchente da Silver para a tabela do caso de uso"""
-    logger.info("Carregando áreas de enchente para PostGIS...")
+def _sync_areas(conn, silver_key: str):
+    """TRUNCATE + INSERT das áreas a partir do silver S3. Se não existir, esvazia."""
+    import io as _io
+    s3 = _s3_client()
+    t = _t('flooding_areas')
+    cur = conn.cursor()
+    cur.execute(f"TRUNCATE TABLE {t}")
     try:
-        silver_path = Path(LOCAL_SILVER_USE_CASE) / "silver_flooding_areas_porto_alegre.parquet"
-        gdf = gpd.read_parquet(str(silver_path))
-        t = _table(use_case, 'flooding_areas')
-        cursor = conn.cursor()
-        cursor.execute(f"DELETE FROM {t}")
+        obj = s3.get_object(Bucket=AWS_S3_SILVER_BUCKET, Key=silver_key)
+        gdf = gpd.read_parquet(_io.BytesIO(obj['Body'].read()))
         for idx, row in gdf.iterrows():
-            cursor.execute(
-                f"""
-                INSERT INTO {t} (area_name, flood_date, severity, affected_population, geometry)
-                VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326))
-                """,
+            cur.execute(
+                f"""INSERT INTO {t} (area_name, flood_date, severity, affected_population, geometry)
+                    VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326))""",
                 (
                     str(row.get('area_name', f'Area_{idx}')),
                     row.get('flood_date', None),
@@ -170,47 +113,105 @@ def load_flooding_areas_to_postgis(conn, use_case: str):
                 )
             )
         conn.commit()
-        cursor.close()
-        logger.info(f"✓ Carregadas {len(gdf)} áreas de enchente")
-        return len(gdf)
-    except Exception as e:
-        logger.error(f"✗ Erro ao carregar áreas de enchente: {e}")
-        return 0
+        logger.info(f"✓ {t}: {len(gdf)} áreas sincronizadas")
+    except Exception:
+        conn.commit()
+        logger.info(f"✓ {t}: esvaziada (silver não existe no S3)")
+    cur.close()
 
 
-def load_to_postgis():
-    """Orquestrador: carrega dados do caso de uso no PostGIS"""
+def _sync_citizens(conn, gold_keys: dict):
+    """TRUNCATE + INSERT dos cidadãos a partir do gold S3. Se não existir, esvazia."""
+    import io as _io
+    s3 = _s3_client()
+    t = _t('citizens')
+    cur = conn.cursor()
+    cur.execute(f"TRUNCATE TABLE {t}")
+    total = 0
+    for s3_key, affected in gold_keys.items():
+        try:
+            obj = s3.get_object(Bucket=AWS_S3_GOLD_BUCKET, Key=s3_key)
+            gdf = gpd.read_parquet(_io.BytesIO(obj['Body'].read()))
+        except Exception:
+            continue
+        for _, row in gdf.iterrows():
+            cur.execute(
+                f"""INSERT INTO {t} (citizen_id, name, address, phone, registration_date, geometry, affected_by_flooding)
+                    VALUES (%s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)
+                    ON CONFLICT (citizen_id) DO UPDATE
+                    SET affected_by_flooding = EXCLUDED.affected_by_flooding,
+                        updated_at = CURRENT_TIMESTAMP""",
+                (
+                    str(row['citizen_id']),
+                    str(row.get('name', '')),
+                    str(row.get('address', '')),
+                    str(row.get('phone', '')),
+                    row.get('registration_date', None),
+                    f"POINT({row.geometry.x} {row.geometry.y})",
+                    affected,
+                )
+            )
+        total += len(gdf)
+    conn.commit()
+    cur.close()
+    if total > 0:
+        logger.info(f"✓ {t}: {total} cidadãos sincronizados")
+    else:
+        logger.info(f"✓ {t}: esvaziada (gold não existe no S3)")
+
+
+def load_to_postgis(sync_areas: bool = True, sync_citizens: bool = True) -> bool:
+    """
+    Sincroniza PostGIS com o estado atual do gold/silver.
+    TRUNCATE + INSERT — o banco reflete exatamente o que está nos arquivos.
+    Se os arquivos não existirem, as tabelas são esvaziadas.
+    """
     logger.info("=" * 60)
-    logger.info(f"POSTGIS LOADER - Caso de uso: {USE_CASE}")
+    logger.info(f"POSTGIS SYNC - {USE_CASE}")
     logger.info("=" * 60)
 
-    conn = get_db_connection()
+    conn = _conn()
     if not conn:
-        logger.error("✗ Não foi possível conectar ao banco de dados!")
         return False
 
     try:
-        create_tables(conn, USE_CASE)
-        load_flooding_areas_to_postgis(conn, USE_CASE)
-        load_citizens_to_postgis(conn, str(Path(LOCAL_GOLD_USE_CASE) / AFFECTED_CITIZENS_FILE), True, USE_CASE)
-        load_citizens_to_postgis(conn, str(Path(LOCAL_GOLD_USE_CASE) / UNAFFECTED_CITIZENS_FILE), False, USE_CASE)
+        _ensure_tables(conn)
 
-        stats = query_statistics(conn, USE_CASE)
-        logger.info("=" * 60)
-        logger.info(f"✓ Dados carregados no PostGIS! (tabelas: {USE_CASE}_citizens, {USE_CASE}_flooding_areas)")
-        logger.info(f"  Total: {stats['total_citizens']} | Afetados: {stats['affected_citizens']} | Não afetados: {stats['unaffected_citizens']}")
+        if sync_areas:
+            silver_key = f"{USE_CASE}/silver_{FLOODING_AREAS_FILE}"
+            _sync_areas(conn, silver_key)
+
+        if sync_citizens:
+            gold_keys = {
+                f"{USE_CASE}/{AFFECTED_CITIZENS_FILE}": True,
+                f"{USE_CASE}/{UNAFFECTED_CITIZENS_FILE}": False,
+            }
+            _sync_citizens(conn, gold_keys)
+        else:
+            # Sem gold — esvaziar cidadãos para refletir estado atual
+            _sync_citizens(conn, {})
+
+        # Estatísticas finais
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) FROM {_t('flooding_areas')}")
+        n_areas = cur.fetchone()[0]
+        cur.execute(f"SELECT COUNT(*) FROM {_t('citizens')}")
+        n_citizens = cur.fetchone()[0]
+        cur.execute(f"SELECT COUNT(*) FROM {_t('citizens')} WHERE affected_by_flooding = TRUE")
+        n_affected = cur.fetchone()[0]
+        cur.close()
+
+        logger.info(f"✓ PostGIS sincronizado: {n_areas} áreas | {n_citizens} cidadãos ({n_affected} afetados)")
         logger.info("=" * 60)
         conn.close()
         return True
+
     except Exception as e:
-        logger.error(f"✗ Erro ao carregar dados: {e}")
+        logger.error(f"✗ Erro na sincronização: {e}", exc_info=True)
         conn.close()
         return False
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     load_to_postgis()

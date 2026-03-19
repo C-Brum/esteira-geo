@@ -1,257 +1,132 @@
+#!/usr/bin/env python3
 """
-Bronze Loader - Cria dados de exemplo e carrega no bucket Bronze
+Bronze Loader — Script auxiliar para upload de arquivos de teste no bucket bronze.
 
+NÃO faz parte do pipeline. Use para popular o bucket bronze com dados de teste
+e validar o fluxo completo (watcher → pipeline → silver/gold).
 
-Caso de uso: Batimento geográfico de áreas atingidas por enchentes no Rio Grande do Sul
-- Dados de áreas atingidas por enchente em Porto Alegre (polígonos)
-- Dados de cidadãos com coordenadas (100 registros, alguns em área atingida)
+Uso:
+    python etl/bronze_loader.py                        # sobe dados sintéticos gerados
+    python etl/bronze_loader.py --file meu_arquivo.csv # sobe arquivo específico
 """
 
+import argparse
+import logging
+import os
+import io
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, Polygon
 import numpy as np
-import logging
-from config import (
-    SAMPLE_DATA_DIR, FLOODING_AREAS_FILE, CITIZENS_FILE,
-    AWS_S3_BRONZE_BUCKET, S3_BRONZE_PREFIX,
-    USE_MINIO, USE_S3, STORAGE_MODE,
-    AWS_ENDPOINT_URL, LOCAL_BRONZE_USE_CASE
-)
+import boto3
+from shapely.geometry import Point, Polygon
+from pathlib import Path
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Configuração via env (mesmas variáveis do pipeline)
+BRONZE_BUCKET = os.getenv('AWS_S3_BRONZE_BUCKET', 'bronze')
+USE_CASE      = os.getenv('USE_CASE', 'enchentes_poa')
+ENDPOINT_URL  = os.getenv('AWS_ENDPOINT_URL')
+ACCESS_KEY    = os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin')
+SECRET_KEY    = os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin123')
+REGION        = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
 
-def create_flooding_areas_geoparquet():
-    """
-    Cria GeoDataFrame com polígonos de áreas atingidas por enchente em Porto Alegre
-    Coordenadas aproximadas de Porto Alegre: lat=-30.0326, lon=-51.2093
-    WGS84 format: (longitude, latitude)
-    """
-    logger.info("Gerando dados de áreas de enchente (Porto Alegre)...")
-    
-    # Polígonos de exemplo (áreas atingidas por enchente)
-    # Porto Alegre fica por volta de: lat=-30.0326, lon=-51.2093
-    # Formato WGS84: (longitude, latitude)
+
+def _s3():
+    kwargs = {'region_name': REGION, 'aws_access_key_id': ACCESS_KEY, 'aws_secret_access_key': SECRET_KEY}
+    if ENDPOINT_URL:
+        kwargs['endpoint_url'] = ENDPOINT_URL
+    return boto3.client('s3', **kwargs)
+
+
+def upload_file(local_path: str, filename: str = None):
+    """Faz upload de um arquivo local para <use_case>/ no bucket bronze."""
+    s3 = _s3()
+    filename = filename or Path(local_path).name
+    key = f"{USE_CASE}/{filename}"
+    s3.upload_file(local_path, BRONZE_BUCKET, key)
+    logger.info(f"✓ Upload: s3://{BRONZE_BUCKET}/{key}")
+
+
+def upload_bytes(data: bytes, filename: str):
+    """Faz upload de bytes para <use_case>/ no bucket bronze."""
+    s3 = _s3()
+    key = f"{USE_CASE}/{filename}"
+    s3.put_object(Bucket=BRONZE_BUCKET, Key=key, Body=data)
+    logger.info(f"✓ Upload: s3://{BRONZE_BUCKET}/{key}")
+
+
+def generate_flooding_areas() -> gpd.GeoDataFrame:
+    """Gera GeoDataFrame com 3 áreas de enchente em Porto Alegre."""
     polygons = [
-        # Área 1: Partenon
-        Polygon([
-            (-51.30, -30.05),
-            (-51.20, -30.05),
-            (-51.20, -29.95),
-            (-51.30, -29.95),
-            (-51.30, -30.05)
-        ]),
-        # Área 2: Centro/Menino Deus
-        Polygon([
-            (-51.22, -30.03),
-            (-51.18, -30.03),
-            (-51.18, -29.98),
-            (-51.22, -29.98),
-            (-51.22, -30.03)
-        ]),
-        # Área 3: Zona Norte
-        Polygon([
-            (-51.25, -29.92),
-            (-51.15, -29.92),
-            (-51.15, -29.88),
-            (-51.25, -29.88),
-            (-51.25, -29.92)
-        ]),
+        Polygon([(-51.30,-30.05),(-51.20,-30.05),(-51.20,-29.95),(-51.30,-29.95),(-51.30,-30.05)]),
+        Polygon([(-51.22,-30.03),(-51.18,-30.03),(-51.18,-29.98),(-51.22,-29.98),(-51.22,-30.03)]),
+        Polygon([(-51.25,-29.92),(-51.15,-29.92),(-51.15,-29.88),(-51.25,-29.88),(-51.25,-29.92)]),
     ]
-    
-    gdf = gpd.GeoDataFrame(
-        {
-            'area_id': [1, 2, 3],
-            'area_name': ['Partenon', 'Centro/Menino Deus', 'Zona Norte'],
-            'flood_date': ['2024-06-10', '2024-06-10', '2024-06-10'],
-            'severity': ['high', 'very_high', 'medium'],
-            'affected_population': [2500, 5000, 1500]
-        },
-        geometry=polygons,
-        crs='EPSG:4326'
-    )
-    
-    logger.info(f"✓ Criado GeoDataFrame com {len(gdf)} áreas de enchente")
-    return gdf
+    return gpd.GeoDataFrame({
+        'area_id': [1, 2, 3],
+        'area_name': ['Partenon', 'Centro/Menino Deus', 'Zona Norte'],
+        'flood_date': ['2024-06-10', '2024-06-10', '2024-06-10'],
+        'severity': ['high', 'very_high', 'medium'],
+        'affected_population': [2500, 5000, 1500],
+    }, geometry=polygons, crs='EPSG:4326')
 
 
-def create_citizens_geoparquet():
-    """
-    Cria GeoDataFrame com dados de cidadãos (100 registros)
-    Alguns estão dentro de áreas atingidas, outros não
-    Format: WGS84 (longitude, latitude)
-    """
-    logger.info("Gerando dados de cidadãos (100 registros)...")
-    
-    np.random.seed(42)
-    
-    # Coordenadas base (Porto Alegre) - WGS84 format: (lon, lat)
-    base_lat = -30.0326
-    base_lon = -51.2093
-    
-    # Gerar 60 cidadãos em área de risco (dentro dos polígonos de enchente)
-    # Format: (longitude, latitude)
-    risk_coords = [
-        (-51.24, -30.01),  # Área 1
-        (-51.22, -30.01),  # Área 2
-        (-51.20, -29.90),  # Área 3
-    ]
-    
-    affected_points = []
-    for _ in range(60):
-        base = risk_coords[np.random.randint(0, len(risk_coords))]
-        # usar distribuição normal com sigma maior para dispersão (aprox ~3km)
-        lon = float(np.random.normal(loc=base[0], scale=0.03))
-        lat = float(np.random.normal(loc=base[1], scale=0.03))
-        affected_points.append(Point(lon, lat))
-    
-    # Gerar 40 cidadãos fora de área de risco
-    # Format: (longitude, latitude)
-    safe_coords = [
-        (-51.10, -29.80),  # Zona sul (segura)
-        (-51.40, -30.15),  # Zona leste (segura)
-    ]
-    
-    safe_points = []
-    for _ in range(40):
-        base = safe_coords[np.random.randint(0, len(safe_coords))]
-        lon = float(np.random.normal(loc=base[0], scale=0.05))
-        lat = float(np.random.normal(loc=base[1], scale=0.05))
-        safe_points.append(Point(lon, lat))
+def generate_citizens(n_affected=60, n_safe=40, id_offset=0) -> gpd.GeoDataFrame:
+    """Gera GeoDataFrame com cidadãos dentro e fora das áreas de enchente."""
+    np.random.seed(42 + id_offset)
+    risk_bases  = [(-51.24,-30.01), (-51.22,-30.01), (-51.20,-29.90)]
+    safe_bases  = [(-51.10,-29.80), (-51.40,-30.15)]
 
-    all_points = affected_points + safe_points
+    def rand_points(bases, n, scale):
+        pts = []
+        for _ in range(n):
+            b = bases[np.random.randint(len(bases))]
+            pts.append(Point(np.random.normal(b[0], scale), np.random.normal(b[1], scale)))
+        return pts
 
-    # Criar DataFrame
-    names = [f"Citizen_{i:03d}" for i in range(100)]
-    addresses = [f"Rua {i}, nº {np.random.randint(1, 1000)}, Porto Alegre" for i in range(100)]
+    points = rand_points(risk_bases, n_affected, 0.03) + rand_points(safe_bases, n_safe, 0.05)
+    total  = n_affected + n_safe
+    ids    = list(range(id_offset, id_offset + total))
 
-    gdf = gpd.GeoDataFrame(
-        {
-            'citizen_id': range(100),
-            'name': names,
-            'address': addresses,
-            'phone': [f"51 99999-{i:04d}" for i in range(100)],
-            'registration_date': pd.date_range('2024-01-01', periods=100),
-        },
-        geometry=all_points,
-        crs='EPSG:4326'
-    )
-
-    logger.info(f"✓ Criado GeoDataFrame com {len(gdf)} cidadãos")
-    return gdf
+    return gpd.GeoDataFrame({
+        'citizen_id': ids,
+        'name': [f"Citizen_{i:03d}" for i in ids],
+        'address': [f"Rua {i}, Porto Alegre" for i in ids],
+        'phone': [f"51 99999-{i:04d}" for i in ids],
+        'registration_date': pd.date_range('2024-01-01', periods=total),
+    }, geometry=points, crs='EPSG:4326')
 
 
-def save_to_geoparquet(gdf, filename):
-    """Salva GeoDataFrame como GeoParquet na camada Bronze"""
-    import os
-    filepath = f"{LOCAL_BRONZE_USE_CASE}/{filename}"
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    gdf.to_parquet(filepath)
-    logger.info(f"✓ Salvo: {filepath}")
-    return filepath
+def upload_synthetic_data():
+    """Gera e faz upload dos dados sintéticos de teste para o bucket bronze."""
+    logger.info("Gerando e enviando dados sintéticos para o bucket bronze...")
 
+    # Áreas de enchente → GeoJSON
+    flooding = generate_flooding_areas()
+    buf = io.BytesIO()
+    flooding.to_file(buf, driver='GeoJSON')
+    upload_bytes(buf.getvalue(), 'flooding_areas_porto_alegre.geojson')
 
-def upload_to_s3(local_path, s3_filename):
-    """
-    Upload para S3 (MinIO/AWS)
-    Suporta: MinIO (Docker local) e AWS S3 real
-    """
-    if STORAGE_MODE == 'local':
-        logger.info(f"  (Local mode - arquivo salvo em disco)")
-        return
-    
-    try:
-        import boto3
-        
-        # Configurar cliente S3/MinIO
-        if USE_MINIO:
-            # MinIO no Docker
-            s3 = boto3.client(
-                's3',
-                endpoint_url=AWS_ENDPOINT_URL,
-                aws_access_key_id='minioadmin',
-                aws_secret_access_key='minioadmin123',
-                region_name='us-east-1'
-            )
-            logger.info(f"  Uploading to MinIO: {AWS_ENDPOINT_URL}")
-        else:
-            # AWS S3 real
-            s3 = boto3.client('s3')
-            logger.info(f"  Uploading to AWS S3")
-        
-        s3_key = f"{S3_BRONZE_PREFIX}{s3_filename}"
-        s3.upload_file(local_path, AWS_S3_BRONZE_BUCKET, s3_key)
-        logger.info(f"✓ Upload: s3://{AWS_S3_BRONZE_BUCKET}/{s3_key}")
-    except Exception as e:
-        logger.warning(f"⚠ Upload failed: {e}")
-        logger.info("  Files available locally")
+    # Cidadãos → CSV
+    citizens = generate_citizens()
+    buf = io.BytesIO()
+    df = citizens.copy()
+    df['longitude'] = df.geometry.x
+    df['latitude']  = df.geometry.y
+    df.drop(columns=['geometry']).to_csv(buf, index=False)
+    upload_bytes(buf.getvalue(), 'citizens_data.csv')
 
-
-def load_sample_data():
-    """
-    Orquestrador: cria dados de exemplo e carrega em Bronze
-    """
-    logger.info("=" * 60)
-    logger.info("BRONZE LOADER - Criando dados de exemplo")
-    logger.info("=" * 60)
-    
-    # Criar diretório de dados se não existir
-    import os
-    os.makedirs(LOCAL_BRONZE_USE_CASE, exist_ok=True)
-    
-    # Gerar dados de exemplo
-    flooding_gdf = create_flooding_areas_geoparquet()
-    citizens_gdf = create_citizens_geoparquet()
-    
-    # Salvar localmente
-    flooding_path = save_to_geoparquet(flooding_gdf, FLOODING_AREAS_FILE)
-    citizens_path = save_to_geoparquet(citizens_gdf, CITIZENS_FILE)
-    
-    # Também salvar formatos adicionais esperados pelo conversor (CSV / GeoJSON)
-    # Flooding areas → GeoJSON
-    flooding_geojson = f"{LOCAL_BRONZE_USE_CASE}/{FLOODING_AREAS_FILE.rsplit('.', 1)[0]}.geojson"
-    try:
-        flooding_gdf.to_file(flooding_geojson, driver='GeoJSON')
-        logger.info(f"✓ Salvo: {flooding_geojson}")
-        upload_to_s3(flooding_geojson, f"{FLOODING_AREAS_FILE.rsplit('.',1)[0]}.geojson")
-    except Exception as e:
-        logger.warning(f"Não foi possível salvar GeoJSON de áreas: {e}")
-
-    # Citizens → CSV + GeoJSON
-    citizens_csv = f"{LOCAL_BRONZE_USE_CASE}/{CITIZENS_FILE.rsplit('.', 1)[0]}.csv"
-    citizens_geojson = f"{LOCAL_BRONZE_USE_CASE}/{CITIZENS_FILE.rsplit('.', 1)[0]}.geojson"
-    try:
-        # Criar DataFrame com colunas lat/lon para CSV
-        citizens_df = citizens_gdf.copy()
-        citizens_df['longitude'] = citizens_df.geometry.x
-        citizens_df['latitude'] = citizens_df.geometry.y
-        citizens_df.drop(columns=['geometry'], inplace=True)
-        citizens_df.to_csv(citizens_csv, index=False)
-        logger.info(f"✓ Salvo: {citizens_csv}")
-        upload_to_s3(citizens_csv, f"{CITIZENS_FILE.rsplit('.',1)[0]}.csv")
-
-        # GeoJSON export
-        citizens_gdf.to_file(citizens_geojson, driver='GeoJSON')
-        logger.info(f"✓ Salvo: {citizens_geojson}")
-        upload_to_s3(citizens_geojson, f"{CITIZENS_FILE.rsplit('.',1)[0]}.geojson")
-    except Exception as e:
-        logger.warning(f"Não foi possível salvar CSV/GeoJSON de cidadãos: {e}")
-
-    # Upload para S3
-    upload_to_s3(flooding_path, FLOODING_AREAS_FILE)
-    upload_to_s3(citizens_path, CITIZENS_FILE)
-    
-    logger.info("=" * 60)
-    logger.info("✓ Bronze layer pronta!")
-    logger.info("=" * 60)
-    
-    return flooding_gdf, citizens_gdf
+    logger.info("✓ Dados sintéticos enviados. O watcher deve detectar e disparar o pipeline.")
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    load_sample_data()
+    parser = argparse.ArgumentParser(description='Upload de arquivos de teste para o bucket bronze')
+    parser.add_argument('--file', help='Arquivo local para upload (opcional)')
+    args = parser.parse_args()
+
+    if args.file:
+        upload_file(args.file)
+    else:
+        upload_synthetic_data()

@@ -54,16 +54,13 @@ LOG_FILE = os.getenv('LOG_FILE', 'logs/pipeline.log')
 os.makedirs(os.path.dirname(LOG_FILE) or '.', exist_ok=True)
 
 # ====== PIPELINE STRUCTURE ======
-SAMPLE_DATA_DIR = 'data'
-os.makedirs(SAMPLE_DATA_DIR, exist_ok=True)
-os.makedirs(LOCAL_BRONZE_USE_CASE, exist_ok=True)
 os.makedirs(LOCAL_SILVER_USE_CASE, exist_ok=True)
 os.makedirs(LOCAL_GOLD_USE_CASE, exist_ok=True)
 
-# S3/MinIO paths (Medallion architecture)
-S3_BRONZE_PREFIX = f'bronze/{USE_CASE}/'
-S3_SILVER_PREFIX = f'silver/{USE_CASE}/'
-S3_GOLD_PREFIX = f'gold/{USE_CASE}/'
+# S3/MinIO paths — prefixo dentro de cada bucket (sem repetir o nome do bucket)
+S3_BRONZE_PREFIX = f'{USE_CASE}/'
+S3_SILVER_PREFIX = f'{USE_CASE}/'
+S3_GOLD_PREFIX   = f'{USE_CASE}/'
 
 # File names
 FLOODING_AREAS_FILE = 'flooding_areas_porto_alegre.parquet'

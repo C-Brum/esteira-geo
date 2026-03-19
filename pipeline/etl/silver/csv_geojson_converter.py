@@ -24,11 +24,42 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import (
     SAMPLE_DATA_DIR, S3_SILVER_PREFIX,
-    AWS_S3_SILVER_BUCKET, USE_MINIO, USE_S3, STORAGE_MODE,
-    AWS_ENDPOINT_URL, LOCAL_SILVER_USE_CASE, LOCAL_BRONZE_USE_CASE
+    AWS_S3_BRONZE_BUCKET, USE_MINIO, USE_S3, STORAGE_MODE,
+    AWS_ENDPOINT_URL, LOCAL_SILVER_USE_CASE, LOCAL_BRONZE_USE_CASE,
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_REGION_NAME,
+    USE_CASE
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _s3_client():
+    kwargs = {'region_name': AWS_S3_REGION_NAME}
+    if AWS_ENDPOINT_URL:
+        kwargs['endpoint_url'] = AWS_ENDPOINT_URL
+    if AWS_ACCESS_KEY_ID:
+        kwargs['aws_access_key_id'] = AWS_ACCESS_KEY_ID
+    if AWS_SECRET_ACCESS_KEY:
+        kwargs['aws_secret_access_key'] = AWS_SECRET_ACCESS_KEY
+    import boto3
+    return boto3.client('s3', **kwargs)
+
+
+def _move_to_processed_s3(filename: str):
+    """Move arquivo no bucket bronze de <use_case>/ para <use_case>/processados/."""
+    src_key  = f"{USE_CASE}/{filename}"
+    dest_key = f"{USE_CASE}/processados/{filename}"
+    try:
+        s3 = _s3_client()
+        s3.copy_object(
+            Bucket=AWS_S3_BRONZE_BUCKET,
+            CopySource={'Bucket': AWS_S3_BRONZE_BUCKET, 'Key': src_key},
+            Key=dest_key,
+        )
+        s3.delete_object(Bucket=AWS_S3_BRONZE_BUCKET, Key=src_key)
+        logger.info(f"→ Movido no S3 para processados/: {filename}")
+    except Exception as e:
+        logger.warning(f"⚠ Não foi possível mover {filename} no S3: {e}")
 
 
 class CSVGeoJSONToGeoParquetConverter:
@@ -201,6 +232,9 @@ class CSVGeoJSONToGeoParquetConverter:
                 csv_files.extend(list(Path(d).glob('*.csv')))
         logger.info(f"Encontrados {len(csv_files)} arquivos CSV")
         
+        processed_dir = self.bronze_path / 'processados'
+        processed_dir.mkdir(exist_ok=True)
+
         for csv_file in csv_files:
             try:
                 output_file = self.silver_path / f"{csv_file.stem}.parquet"
@@ -211,6 +245,9 @@ class CSVGeoJSONToGeoParquetConverter:
                     'records': len(gdf),
                     'output': str(output_file)
                 }
+                csv_file.rename(processed_dir / csv_file.name)
+                logger.info(f"→ Movido para processados/: {csv_file.name}")
+                _move_to_processed_s3(csv_file.name)
             except Exception as e:
                 logger.error(f"Erro processando {csv_file.name}: {str(e)}")
                 results[csv_file.name] = {
@@ -218,14 +255,16 @@ class CSVGeoJSONToGeoParquetConverter:
                     'error': str(e)
                 }
         
-        # Processar GeoJSONs
         # Processar GeoJSONs — buscar em múltiplos diretórios (SAMPLE_DATA_DIR e bronze local)
         geojson_files = []
         for d in self.data_dirs:
             if d.exists():
                 geojson_files.extend(list(Path(d).glob('*.geojson')))
         logger.info(f"Encontrados {len(geojson_files)} arquivos GeoJSON")
-        
+
+        processed_dir = self.bronze_path / 'processados'
+        processed_dir.mkdir(exist_ok=True)
+
         for geojson_file in geojson_files:
             try:
                 output_file = self.silver_path / f"{geojson_file.stem}.parquet"
@@ -236,6 +275,9 @@ class CSVGeoJSONToGeoParquetConverter:
                     'records': len(gdf),
                     'output': str(output_file)
                 }
+                geojson_file.rename(processed_dir / geojson_file.name)
+                logger.info(f"→ Movido para processados/: {geojson_file.name}")
+                _move_to_processed_s3(geojson_file.name)
             except Exception as e:
                 logger.error(f"Erro processando {geojson_file.name}: {str(e)}")
                 results[geojson_file.name] = {
