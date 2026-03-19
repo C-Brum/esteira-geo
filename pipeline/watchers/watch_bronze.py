@@ -18,9 +18,10 @@ from collections import defaultdict
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '10'))
-BRONZE_BUCKET = os.getenv('AWS_S3_BRONZE_BUCKET', 'bronze')
-WATCHED_EXTS  = {'.csv', '.geojson', '.parquet'}
+POLL_INTERVAL    = int(os.getenv('POLL_INTERVAL', '10'))
+BRONZE_BUCKET    = os.getenv('AWS_S3_BRONZE_BUCKET', 'bronze')
+WATCHED_EXTS     = {'.csv', '.geojson', '.parquet'}
+AUTO_ROOT_PREFIX = 'automatizado/'
 
 
 def get_s3_client():
@@ -37,12 +38,12 @@ def get_s3_client():
 
 def list_pending(s3) -> dict[str, list[str]]:
     """
-    Lista arquivos pendentes agrupados por use_case.
+    Lista arquivos pendentes em automatizado/<use_case>/<arquivo>.
     Ignora qualquer key que contenha /processados/.
-    Retorna: { 'enchentes_poa': ['enchentes_poa/file.csv', ...], ... }
+    Retorna: { 'enchentes_poa': ['automatizado/enchentes_poa/file.csv', ...], ... }
     """
     try:
-        resp = s3.list_objects_v2(Bucket=BRONZE_BUCKET)
+        resp = s3.list_objects_v2(Bucket=BRONZE_BUCKET, Prefix=AUTO_ROOT_PREFIX)
     except ClientError as e:
         logger.error(f"Erro ao listar bucket: {e}")
         return {}
@@ -50,8 +51,8 @@ def list_pending(s3) -> dict[str, list[str]]:
     grouped = defaultdict(list)
     for obj in resp.get('Contents', []):
         key = obj['Key']
-        parts = key.split('/')
-        # Precisa ter pelo menos use_case/filename e não estar em processados/
+        # key: automatizado/<use_case>/<filename>
+        parts = key[len(AUTO_ROOT_PREFIX):].split('/')
         if len(parts) < 2 or 'processados' in parts:
             continue
         filename = parts[-1]
@@ -101,12 +102,14 @@ def main():
             # Agrupar novos arquivos por use_case e disparar um pipeline por grupo
             new_by_use_case = defaultdict(list)
             for key in new_files:
-                use_case = key.split('/')[0]
+                # key: automatizado/<use_case>/<filename>
+                use_case = key[len(AUTO_ROOT_PREFIX):].split('/')[0]
                 new_by_use_case[use_case].append(key)
 
             for use_case, files in new_by_use_case.items():
                 logger.info(f"[{use_case}] Novos arquivos: {files}")
                 run_pipeline(use_case)
+
 
             known = set()
         else:

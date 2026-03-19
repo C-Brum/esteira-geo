@@ -1,67 +1,82 @@
 graph LR
-    subgraph input["📥 Input Data"]
-        flooding["3 Flood Areas<br/>Polygons<br/>Porto Alegre"]
-        citizens["100 Citizens<br/>Point Features<br/>Coordinates"]
+    subgraph input["📥 Ingestão\nbronze/automatizado/"]
+        uc_poa["enchentes_poa/\nCSV + GeoJSON\n(cidadãos e áreas)"]
+        uc_mg["enchentes_mg/\nCSV + GeoJSON\n(cidadãos e áreas)"]
+        uc_rj["enchentes_rj/\nCSV + GeoJSON\n(cidadãos e áreas)"]
+        processed["processados/\n(movido após leitura)"]
     end
-    
-    subgraph bronze_layer["🟤 BRONZE Layer<br/>Raw Data Storage"]
-        bronze_dir["S3/OBS/Local<br/>flooding_areas.parquet<br/>citizens.parquet"]
-        bronze_meta["Metadata:<br/>EPSG:4326<br/>3,100 records<br/>Timestamp"]
+
+    subgraph watcher["👁️ Watcher\nwatch_bronze.py"]
+        poll["Polling S3\na cada 10s\nPrefix: automatizado/\nDetecta use_case\npelo caminho do arquivo"]
     end
-    
-    subgraph silver_layer["⚪ SILVER Layer<br/>Normalized Data"]
-        silver_dir["S3/OBS/Local<br/>flooding_areas.parquet<br/>citizens.parquet"]
-        silver_checks["Quality Checks:<br/>✓ Remove duplicates<br/>✓ Validate geometries<br/>✓ Standardize types<br/>✓ Parse dates"]
-        silver_meta["Schema:<br/>area_id: int64<br/>flood_date: datetime<br/>data_quality_score"]
+
+    subgraph bronze_layer["🟤 BRONZE\nS3: bronze/automatizado/use_case/"]
+        b_files["CSV / GeoJSON\nbrutos\n(sem transformação)"]
     end
-    
-    subgraph gold_layer["🟡 GOLD Layer<br/>Processed & Analyzed"]
-        spatial_join["🎯 Spatial Join<br/>ST_Contains<br/>citizen point within<br/>flood polygon"]
-        affected["60 Affected<br/>Citizens<br/>Identified by<br/>flood area"]
-        unaffected["40 Unaffected<br/>Citizens<br/>Safe zones"]
-        summary["100 Total<br/>Citizens<br/>Summary info"]
+
+    subgraph silver_layer["⚪ SILVER\nS3: silver/use_case/"]
+        s_areas["silver_flooding_areas.parquet\nAcumulativo por area_id\n(keep last)"]
+        s_citizens["silver_citizens_data.parquet\nAcumulativo por citizen_id\n(keep last)"]
+        s_checks["Normalização:\n✓ Geometrias válidas\n✓ citizen_id → str\n✓ area_id → str\n✓ registration_date\n✓ Dedup por ID"]
     end
-    
-    subgraph postgis["🗺️ PostGIS<br/>Spatial Database"]
-        tables["Tables:<br/>flooding_areas<br/>citizens<br/>GIST indexes<br/>GEOMETRY(POINT,4326)<br/>GEOMETRY(POLYGON,4326)"]
-        queries["Queries:<br/>ST_Contains()<br/>ST_Distance()<br/>ST_Buffer()<br/>ST_Intersects()"]
-        views["Views:<br/>v_citizens_summary<br/>Statistics<br/>Reports"]
+
+    subgraph gold_layer["🟡 GOLD\nS3: gold/use_case/"]
+        g_join["🎯 Spatial Join\ngeopandas sjoin\nwithin / intersects"]
+        g_affected["affected_citizens.parquet"]
+        g_unaffected["unaffected_citizens.parquet"]
+        g_all["all_citizens_evaluated.parquet"]
+        g_areas["flooding_areas.parquet\n(fonte das áreas\npara o PostGIS)"]
     end
-    
-    subgraph visualization["🌐 Flask Dashboard"]
-        dashboard["Web UI<br/>./index.html<br/>Real-time cards"]
-        apis["REST APIs:<br/>/api/geometries<br/>/api/stats<br/>/health"]
-        maps["Map Layers:<br/>Flood areas<br/>Citizens location<br/>Risk zones"]
+
+    subgraph postgis["🗺️ PostGIS\nesteira_geo"]
+        pg_citizens["use_case_citizens\ngeometry POINT 4326\naffected_by_flooding\nGIST index"]
+        pg_areas["use_case_flooding_areas\ngeometry POLYGON 4326\nGIST index"]
+        pg_note["Fonte exclusiva: GOLD\nTRUNCATE + INSERT\na cada pipeline"]
     end
-    
-    input -->|load_sample_data| bronze_dir
-    flooding -->|3 records| bronze_meta
-    citizens -->|100 records| bronze_meta
-    
-    bronze_dir -->|read| silver_checks
-    silver_checks -->|validate| silver_dir
-    silver_meta -->|metadata| silver_dir
-    
-    silver_dir -->|read normalized| spatial_join
-    spatial_join -->|✓ within| affected
-    spatial_join -->|✗ outside| unaffected
-    affected -->|write| gold_layer
-    unaffected -->|write| gold_layer
-    summary -->|aggregated| gold_layer
-    
-    gold_layer -->|ST_GeomFromText| postgis
-    postgis -->|INSERT geometries| tables
-    postgis -->|create GIST| tables
-    tables -->|SELECT queries| queries
-    queries -->|aggregate| views
-    
-    views -->|fetch data| apis
-    apis -->|display| dashboard
-    apis -->|render| maps
-    
-    style input fill:#FF6B6B,stroke:#000,color:#fff
-    style bronze_layer fill:#8B6F47,stroke:#000,color:#fff
-    style silver_layer fill:#D3D3D3,stroke:#000,color:#000
-    style gold_layer fill:#FFD700,stroke:#000,color:#000
+
+    subgraph flask["🌐 Flask\nPort 5000"]
+        api_stats["/api/stats?use_case="]
+        api_geojson["/api/geojson?use_case="]
+        api_uc["/api/use_cases"]
+        map_leaflet["/map\nLeaflet + MarkerCluster\ncircleMarker\nfitBounds automático"]
+    end
+
+    input --> watcher
+    watcher -->|"USE_CASE=enchentes_poa\nmain.py"| bronze_layer
+    watcher -->|"USE_CASE=enchentes_mg\nmain.py"| bronze_layer
+    watcher -->|"USE_CASE=enchentes_rj\nmain.py"| bronze_layer
+
+    bronze_layer --> s_checks
+    s_checks --> s_areas
+    s_checks --> s_citizens
+    s_areas --> g_join
+    s_citizens --> g_join
+    g_join --> g_affected
+    g_join --> g_unaffected
+    g_join --> g_all
+    s_areas -->|cópia para gold| g_areas
+
+    g_affected --> pg_citizens
+    g_unaffected --> pg_citizens
+    g_areas --> pg_areas
+    pg_note --- pg_citizens
+    pg_note --- pg_areas
+
+    pg_citizens --> api_stats
+    pg_citizens --> api_geojson
+    pg_areas --> api_geojson
+    api_stats --> map_leaflet
+    api_geojson --> map_leaflet
+    api_uc --> map_leaflet
+
+    uc_poa -->|arquivo processado| processed
+    uc_mg -->|arquivo processado| processed
+    uc_rj -->|arquivo processado| processed
+
+    style input fill:#4E342E,stroke:#000,color:#fff
+    style watcher fill:#6A1B9A,stroke:#000,color:#fff
+    style bronze_layer fill:#5D4037,stroke:#000,color:#fff
+    style silver_layer fill:#616161,stroke:#000,color:#fff
+    style gold_layer fill:#F9A825,stroke:#000,color:#000
     style postgis fill:#336791,stroke:#000,color:#fff
-    style visualization fill:#4CAF50,stroke:#000,color:#fff
+    style flask fill:#013243,stroke:#000,color:#fff

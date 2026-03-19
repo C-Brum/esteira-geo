@@ -32,9 +32,14 @@ esteira-geo/
 │   ├── main.py            # Orquestrador principal
 │   ├── config.py          # Configuração (USE_CASE, paths, credenciais)
 │   └── requirements.txt
+├── notebooks/             # Notebooks Jupyter interativos
+│   └── esteira_geo.ipynb  # Fluxo completo Bronze → Silver → Gold → PostGIS
 ├── data/
 │   └── bronze/
-│       └── enchentes_poa/ # Bind mount — arquivos CSV/GeoJSON externos
+│       └── automatizado/          # Área monitorada pelo watcher
+│           ├── enchentes_poa/     # Arquivos CSV/GeoJSON para este use_case
+│           ├── enchentes_mg/
+│           └── enchentes_rj/
 ├── docs/                  # Documentação
 │   ├── terraform.md
 │   └── huawei-setup.md
@@ -45,9 +50,9 @@ esteira-geo/
 
 A esteira segue o padrão **Medallion**:
 
-- **Bronze**: Armazenamento bruto de dados (OBS/S3)
-- **Silver**: Dados processados e validados (OBS/S3)
-- **Gold**: Dados transformados prontos para análise (OBS/S3 + PostGIS)
+- **Bronze**: Armazenamento bruto de dados (OBS/S3). Área `automatizado/<use_case>/` é monitorada pelo watcher; o restante do bucket é ignorado
+- **Silver**: Dados normalizados e validados (OBS/S3) — acumulativo por `citizen_id`/`area_id`
+- **Gold**: Resultado do batimento geoespacial (OBS/S3 + PostGIS) — única fonte de verdade do PostGIS
 
 **Componentes de Infraestrutura**:
 - 2 VMs: `processing` (Python) + `presentation` (web, acesso internet)
@@ -75,22 +80,66 @@ docker compose ps
 docker compose exec pipeline python /app/main.py
 
 # 4. Acessar serviços
-# Dashboard Flask: http://localhost:5000
-# MinIO Console: http://localhost:9001 (user: minioadmin)
-# PostgreSQL: localhost:5432 (user: esteira_user)
+# Dashboard Flask:  http://localhost:5000
+# JupyterLab:       http://localhost:8888/lab?token=esteira
+# MinIO Console:    http://localhost:9001 (user: minioadmin)
+# PostgreSQL:       localhost:5432 (user: esteira_user)
 ```
+
+### JupyterLab — Processamento Interativo
+
+O ambiente inclui um container JupyterLab com acesso direto a todos os módulos da esteira, MinIO e PostGIS. Ideal para exploração de dados, depuração e experimentos sem alterar o pipeline principal.
+
+```bash
+# Iniciar apenas o Jupyter (se o ambiente já estiver rodando)
+docker compose up -d jupyter
+
+# Acessar
+# http://localhost:8888/lab?token=esteira
+```
+
+O notebook `notebooks/esteira_geo.ipynb` replica o fluxo completo do watcher de forma interativa:
+
+| Célula | O que faz |
+|--------|-----------|
+| 0 — Configuração | Define `USE_CASE` e exibe conexões |
+| 1 — Bronze | Lista arquivos no bucket S3/MinIO |
+| 2 — Silver | Executa `process_silver()`, exibe DataFrames normalizados |
+| 3 — Gold | Executa `process_gold()`, mostra resultado do spatial join |
+| 4 — PostGIS | Sincroniza via `load_to_postgis()` |
+| 5 — Consultas SQL | Queries direto no PostGIS |
+| 6 — Mapa | Abre o mapa Leaflet do Flask via IFrame |
+| 7 — Ingestão manual | Upload de arquivo para o bronze + reprocessamento |
+
+Para trocar o use_case, altere `os.environ['USE_CASE']` na célula 0 e reexecute:
+
+```python
+os.environ['USE_CASE'] = 'enchentes_rj'  # ou enchentes_mg, enchentes_poa
+```
+
+Os notebooks são persistidos em `./notebooks/` no host — alterações sobrevivem a restarts do container.
 
 ### Ingestão de Dados Externos
 
-Coloque arquivos CSV ou GeoJSON em `data/bronze/enchentes_poa/` para incluí-los no pipeline:
+O watcher monitora exclusivamente o prefixo `automatizado/<use_case>/` dentro do bucket bronze. Arquivos depositados em qualquer outro caminho do bucket são ignorados.
+
+```
+bronze/
+└── automatizado/
+    ├── enchentes_poa/      ← watcher detecta e dispara USE_CASE=enchentes_poa
+    │   ├── arquivo.csv
+    │   └── processados/    ← movido automaticamente após processar
+    ├── enchentes_mg/
+    └── enchentes_rj/
+```
 
 ```bash
-# Exemplo: adicionar CSV de cidadãos
-cp meus_cidadaos.csv data/bronze/enchentes_poa/
+# Copiar arquivo para a área automatizada
+cp meus_cidadaos.csv data/bronze/automatizado/enchentes_poa/
 
-# O watcher detecta automaticamente e dispara o pipeline (polling 5s)
-# Ou execute manualmente:
-docker compose exec pipeline python /app/main.py
+# O watcher detecta em até 10s e dispara o pipeline automaticamente
+# Ou execute manualmente para um use_case específico:
+docker compose exec -e USE_CASE=enchentes_poa pipeline python /app/main.py
 ```
 
 **Formatos suportados:**
@@ -411,7 +460,7 @@ python main.py
 
 Veja [pipeline/TESTES_CSV_GEOJSON.md](./pipeline/TESTES_CSV_GEOJSON.md) para suite completa de testes.
 
-Arquivos de dados de teste disponíveis em `data/bronze/enchentes_poa/`:
+Arquivos de dados de teste disponíveis em `data/bronze/automatizado/enchentes_poa/`:
 
 | Arquivo | Tipo | Cidadãos |
 |---------|------|----------|
@@ -552,6 +601,7 @@ CREATE INDEX idx_geometries_geom ON geometries USING GIST(geometry);
 - [Docker Environment](./pipeline/DOCKER.md)
 - [CSV/GeoJSON Guide](./pipeline/CSV_GEOJSON_GUIDE.md)
 - [Testes e Validações](./pipeline/TESTES_CSV_GEOJSON.md)
+- [Notebook Interativo](./notebooks/esteira_geo.ipynb)
 
 ---
 
@@ -576,7 +626,21 @@ terraform init -upgrade
 
 **Watcher não detecta arquivo já existente**
 ```bash
-touch data/bronze/enchentes_poa/meu_arquivo.csv
+touch data/bronze/automatizado/enchentes_poa/meu_arquivo.csv
+```
+
+**Arquivo fora de `automatizado/` não é processado**
+- O watcher ignora qualquer key que não comece com `automatizado/<use_case>/`
+- Mova o arquivo para o caminho correto: `bronze/automatizado/<use_case>/arquivo.csv`
+
+**Jupyter — módulos da esteira não encontrados**
+- Confirme que o container foi buildado após alterações: `docker compose build jupyter`
+- O `sys.path` do notebook aponta para `/app` onde os módulos são copiados no build
+
+**Jupyter — alterações no código do pipeline não refletem no notebook**
+```bash
+# Rebuild necessário para copiar código atualizado para o container
+docker compose build jupyter && docker compose up -d jupyter
 ```
 
 ---

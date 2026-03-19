@@ -24,8 +24,8 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-PROCESSED_PREFIX = f"{USE_CASE}/processados/"
-BRONZE_PREFIX    = f"{USE_CASE}/"
+PROCESSED_PREFIX = f"automatizado/{USE_CASE}/processados/"
+BRONZE_PREFIX    = f"automatizado/{USE_CASE}/"
 SILVER_PREFIX    = f"{USE_CASE}/"
 WATCHED_EXTS     = {'.csv', '.geojson', '.parquet'}
 

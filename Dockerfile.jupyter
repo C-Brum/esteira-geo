@@ -1,0 +1,24 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    gdal-bin libgdal-dev libgeos-dev libproj-dev libffi-dev curl postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GDAL_CONFIG=/usr/bin/gdal-config
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+
+COPY pipeline/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt jupyterlab
+
+COPY pipeline/*.py ./
+COPY pipeline/etl ./etl
+COPY pipeline/watchers ./watchers
+
+RUN mkdir -p /data/bronze /data/silver /data/gold /app/logs /notebooks
+
+EXPOSE 8888
+
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root", \
+     "--NotebookApp.token=esteira", "--notebook-dir=/notebooks"]

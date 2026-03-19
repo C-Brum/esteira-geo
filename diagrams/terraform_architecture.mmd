@@ -1,60 +1,60 @@
 graph TB
     subgraph user["👤 Developer/Admin"]
-        tf["Terraform"]
+        tf["Terraform\n>= 1.0"]
         ansible["Ansible"]
     end
-    
+
     subgraph aws["☁️ AWS Cloud"]
         aws_vpc["VPC + Security Groups"]
-        aws_s3_b["S3: Bronze Bucket<br/>Raw Data"]
-        aws_s3_s["S3: Silver Bucket<br/>Normalized"]
-        aws_s3_g["S3: Gold Bucket<br/>Processed"]
-        aws_ec2_proc["EC2: Processing VM<br/>geospatial libs<br/>Python pipeline"]
-        aws_ec2_web["EC2: Presentation VM<br/>Flask + Nginx<br/>Gunicorn"]
-        aws_rds["RDS PostgreSQL<br/>+ PostGIS<br/>Spatial Indexes"]
+        aws_s3_b["S3: Bronze Bucket\nautomatizado/use_case/\nRaw CSV/GeoJSON"]
+        aws_s3_s["S3: Silver Bucket\nuse_case/\nNormalizado + Acumulativo"]
+        aws_s3_g["S3: Gold Bucket\nuse_case/\nSpatial Join Results\n+ flooding_areas"]
+        aws_ec2_proc["EC2: Processing VM\nPython pipeline\nwatcher + main.py"]
+        aws_ec2_web["EC2: Presentation VM\nFlask + Nginx\nLeaflet Dashboard"]
+        aws_rds["RDS PostgreSQL\n+ PostGIS\nuse_case_citizens\nuse_case_flooding_areas"]
     end
-    
-    subgraph huawei["☁️ Huawei Cloud<br/>São Paulo"]
+
+    subgraph huawei["☁️ Huawei Cloud\nSão Paulo"]
         hw_vpc["VPC + Security Groups"]
-        hw_obs_b["OBS: Bronze Bucket<br/>Raw Data"]
-        hw_obs_s["OBS: Silver Bucket<br/>Normalized"]
-        hw_obs_g["OBS: Gold Bucket<br/>Processed"]
-        hw_ecs_proc["ECS: Processing VM<br/>geospatial libs<br/>Python pipeline"]
-        hw_ecs_web["ECS: Presentation VM<br/>Flask + Nginx<br/>Gunicorn"]
-        hw_rds["RDS PostgreSQL<br/>+ PostGIS<br/>Spatial Indexes"]
+        hw_obs_b["OBS: Bronze Bucket\nautomatizado/use_case/\nRaw CSV/GeoJSON"]
+        hw_obs_s["OBS: Silver Bucket\nuse_case/\nNormalizado + Acumulativo"]
+        hw_obs_g["OBS: Gold Bucket\nuse_case/\nSpatial Join Results\n+ flooding_areas"]
+        hw_ecs_proc["ECS: Processing VM\nPython pipeline\nwatcher + main.py"]
+        hw_ecs_web["ECS: Presentation VM\nFlask + Nginx\nLeaflet Dashboard"]
+        hw_rds["RDS PostgreSQL\n+ PostGIS\nuse_case_citizens\nuse_case_flooding_areas"]
     end
-    
-    subgraph medallion["🏛️ Medallion Architecture"]
-        bronze["Bronze Layer<br/>Raw Data<br/>GeoParquet"]
-        silver["Silver Layer<br/>Normalized Data<br/>Validated Geometries"]
-        gold["Gold Layer<br/>Processed Data<br/>Spatial Join Results"]
+
+    subgraph pipeline["🔄 Pipeline (por use_case)"]
+        p_watcher["Watcher\nautomatizado/use_case/\n→ detecta use_case\n→ dispara main.py"]
+        p_silver["Silver Processor\nNormaliza + Acumula\nCSV / GeoJSON → Parquet"]
+        p_gold["Gold Processor\nSpatial Join\nafetados / não afetados"]
+        p_postgis["PostGIS Loader\nTRUNCATE + INSERT\nFonte: gold bucket"]
+        p_watcher --> p_silver --> p_gold --> p_postgis
     end
-    
+
     user -->|terraform apply| aws
     user -->|terraform apply| huawei
-    user -->|ansible-playbook| aws_ec2_proc
-    user -->|ansible-playbook| aws_ec2_web
-    user -->|ansible-playbook| hw_ecs_proc
-    user -->|ansible-playbook| hw_ecs_web
-    
-    aws_ec2_proc -->|writes| aws_s3_b
-    aws_s3_b -->|pipeline| silver
-    silver -->|pipeline| gold
-    gold -->|writes| aws_s3_g
-    aws_s3_g -->|loads| aws_rds
-    
-    hw_ecs_proc -->|writes| hw_obs_b
-    hw_obs_b -->|pipeline| silver
-    silver -->|pipeline| gold
-    gold -->|writes| hw_obs_g
-    hw_obs_g -->|loads| hw_rds
-    
+    user -->|ansible-playbook processing.yml| aws_ec2_proc
+    user -->|ansible-playbook presentation.yml| aws_ec2_web
+    user -->|ansible-playbook processing.yml| hw_ecs_proc
+    user -->|ansible-playbook presentation.yml| hw_ecs_web
+
+    aws_ec2_proc -->|executa| pipeline
+    pipeline -->|lê bronze| aws_s3_b
+    pipeline -->|escreve silver| aws_s3_s
+    pipeline -->|escreve gold| aws_s3_g
+    pipeline -->|sincroniza| aws_rds
+
+    hw_ecs_proc -->|executa| pipeline
+    pipeline -->|lê bronze| hw_obs_b
+    pipeline -->|escreve silver| hw_obs_s
+    pipeline -->|escreve gold| hw_obs_g
+    pipeline -->|sincroniza| hw_rds
+
     aws_ec2_web -->|queries| aws_rds
     hw_ecs_web -->|queries| hw_rds
-    
-    aws_rds -->|replicates| hw_rds
-    
+
     style aws fill:#FF9900,stroke:#000,color:#000
     style huawei fill:#E60012,stroke:#000,color:#fff
-    style medallion fill:#4CAF50,stroke:#000,color:#fff
+    style pipeline fill:#4CAF50,stroke:#000,color:#fff
     style user fill:#2196F3,stroke:#000,color:#fff
