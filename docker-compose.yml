@@ -119,12 +119,13 @@ services:
         condition: service_started
     environment:
       POLL_INTERVAL: 10
-      USE_CASE: enchentes_poa
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
       AWS_ENDPOINT_URL: http://minio:9000
       AWS_S3_REGION_NAME: us-east-1
       AWS_S3_BRONZE_BUCKET: bronze
+      AWS_S3_SILVER_BUCKET: silver
+      AWS_S3_GOLD_BUCKET: gold
       RDS_HOST: postgis
       RDS_PORT: 5432
       RDS_NAME: esteira_geo

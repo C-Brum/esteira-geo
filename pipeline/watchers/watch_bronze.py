@@ -1,123 +1,113 @@
 """
 Watcher S3/MinIO — Esteira Geo
 
-Monitora o bucket bronze via polling S3 (boto3).
-Ao detectar arquivos novos em <bucket>/<use_case>/, dispara o pipeline
-e move os arquivos processados para <bucket>/<use_case>/processados/.
-
-Funciona com MinIO (Docker local) e AWS S3 real — sem dependência de filesystem.
+Monitora TODO o bucket bronze (sem prefix fixo).
+Detecta o use_case pelo prefixo do arquivo: <use_case>/arquivo.csv
+Dispara o pipeline com USE_CASE correto para cada grupo de arquivos.
 """
 
 import os
 import time
 import logging
+import subprocess
+import sys
 import boto3
 from botocore.exceptions import ClientError
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger(__name__)
 
-# Configuração via variáveis de ambiente
-POLL_INTERVAL  = int(os.getenv('POLL_INTERVAL', '10'))
-USE_CASE       = os.getenv('USE_CASE', 'enchentes_poa')
-BRONZE_BUCKET  = os.getenv('AWS_S3_BRONZE_BUCKET', 'bronze')
-PREFIX         = f"{USE_CASE}/"
-PROCESSED_PREFIX = f"{USE_CASE}/processados/"
-
-# Extensões monitoradas
-WATCHED_EXTS = {'.csv', '.geojson', '.parquet'}
+POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '10'))
+BRONZE_BUCKET = os.getenv('AWS_S3_BRONZE_BUCKET', 'bronze')
+WATCHED_EXTS  = {'.csv', '.geojson', '.parquet'}
 
 
 def get_s3_client():
-    kwargs = {}
+    kwargs = {
+        'aws_access_key_id':     os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin'),
+        'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin123'),
+        'region_name':           os.getenv('AWS_S3_REGION_NAME', 'us-east-1'),
+    }
     endpoint = os.getenv('AWS_ENDPOINT_URL')
     if endpoint:
         kwargs['endpoint_url'] = endpoint
-    kwargs['aws_access_key_id']     = os.getenv('AWS_ACCESS_KEY_ID', 'minioadmin')
-    kwargs['aws_secret_access_key'] = os.getenv('AWS_SECRET_ACCESS_KEY', 'minioadmin123')
-    kwargs['region_name']           = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
     return boto3.client('s3', **kwargs)
 
 
-def list_pending(s3) -> list[str]:
-    """Lista objetos no prefix do caso de uso que não estão em processados/."""
+def list_pending(s3) -> dict[str, list[str]]:
+    """
+    Lista arquivos pendentes agrupados por use_case.
+    Ignora qualquer key que contenha /processados/.
+    Retorna: { 'enchentes_poa': ['enchentes_poa/file.csv', ...], ... }
+    """
     try:
-        resp = s3.list_objects_v2(Bucket=BRONZE_BUCKET, Prefix=PREFIX)
+        resp = s3.list_objects_v2(Bucket=BRONZE_BUCKET)
     except ClientError as e:
         logger.error(f"Erro ao listar bucket: {e}")
-        return []
+        return {}
 
-    pending = []
+    grouped = defaultdict(list)
     for obj in resp.get('Contents', []):
         key = obj['Key']
-        # Ignorar subdiretórios (processados/, etc.) e arquivos sintéticos
-        if key.startswith(PROCESSED_PREFIX):
+        parts = key.split('/')
+        # Precisa ter pelo menos use_case/filename e não estar em processados/
+        if len(parts) < 2 or 'processados' in parts:
             continue
-        filename = key.split('/')[-1]
+        filename = parts[-1]
         if not filename:
             continue
-        ext = os.path.splitext(filename)[1].lower()
-        if ext not in WATCHED_EXTS:
+        if os.path.splitext(filename)[1].lower() not in WATCHED_EXTS:
             continue
-        pending.append(key)
+        use_case = parts[0]
+        grouped[use_case].append(key)
 
-    return pending
-
-
-def move_to_processed(s3, key: str):
-    """Move objeto para <use_case>/processados/ dentro do mesmo bucket."""
-    filename = key.split('/')[-1]
-    dest_key = f"{PROCESSED_PREFIX}{filename}"
-    try:
-        s3.copy_object(
-            Bucket=BRONZE_BUCKET,
-            CopySource={'Bucket': BRONZE_BUCKET, 'Key': key},
-            Key=dest_key,
-        )
-        s3.delete_object(Bucket=BRONZE_BUCKET, Key=key)
-        logger.info(f"→ Movido para processados/: {filename}")
-    except ClientError as e:
-        logger.error(f"Erro ao mover {key}: {e}")
+    return dict(grouped)
 
 
-def run_pipeline():
-    logger.info("Mudança detectada no bucket bronze — disparando pipeline...")
-    import subprocess, sys
+def run_pipeline(use_case: str):
+    logger.info(f"[{use_case}] Disparando pipeline...")
     result = subprocess.run(
         [sys.executable, '/app/main.py'],
         cwd='/app',
-        env={**os.environ, 'PYTHONUNBUFFERED': '1'},
+        env={**os.environ, 'USE_CASE': use_case, 'PYTHONUNBUFFERED': '1'},
     )
     if result.returncode == 0:
-        logger.info("Pipeline concluído com sucesso")
+        logger.info(f"[{use_case}] Pipeline concluído com sucesso")
     else:
-        logger.error(f"Pipeline falhou com código {result.returncode}")
+        logger.error(f"[{use_case}] Pipeline falhou com código {result.returncode}")
 
 
 def main():
-    logger.info(f"Watcher S3 iniciado: bucket={BRONZE_BUCKET}, prefix={PREFIX}, poll={POLL_INTERVAL}s")
+    logger.info(f"Watcher S3 iniciado: bucket={BRONZE_BUCKET}, poll={POLL_INTERVAL}s (multi-use-case)")
     s3 = get_s3_client()
 
-    # Processar arquivos já existentes no bucket ao iniciar
+    # Processar arquivos já existentes ao iniciar
     pending = list_pending(s3)
     if pending:
-        logger.info(f"Arquivos encontrados no início: {pending}")
-        run_pipeline()
-        for key in list_pending(s3):
-            move_to_processed(s3, key)
+        logger.info(f"Arquivos encontrados no início: {dict(pending)}")
+        for use_case in pending:
+            run_pipeline(use_case)
 
-    known = set()  # após processar (ou se vazio), bucket está limpo
+    known = set()
 
     while True:
         time.sleep(POLL_INTERVAL)
-        current = set(list_pending(s3))
+        pending = list_pending(s3)
+        current = {key for keys in pending.values() for key in keys}
         new_files = current - known
 
         if new_files:
-            logger.info(f"Novos arquivos detectados: {new_files}")
-            run_pipeline()
-            for key in list_pending(s3):
-                move_to_processed(s3, key)
+            # Agrupar novos arquivos por use_case e disparar um pipeline por grupo
+            new_by_use_case = defaultdict(list)
+            for key in new_files:
+                use_case = key.split('/')[0]
+                new_by_use_case[use_case].append(key)
+
+            for use_case, files in new_by_use_case.items():
+                logger.info(f"[{use_case}] Novos arquivos: {files}")
+                run_pipeline(use_case)
+
             known = set()
         else:
             known = current
