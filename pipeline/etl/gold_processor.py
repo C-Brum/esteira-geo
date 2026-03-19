@@ -226,6 +226,7 @@ def process_gold():
     save_to_gold(affected, AFFECTED_CITIZENS_FILE)
     save_to_gold(unaffected, UNAFFECTED_CITIZENS_FILE)
     save_to_gold(all_summary, ALL_CITIZENS_FILE)
+    save_to_gold(flooding_silver, FLOODING_AREAS_FILE)
     
     logger.info("=" * 60)
     logger.info("✓ Gold layer pronta!")

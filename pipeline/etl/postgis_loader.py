@@ -90,15 +90,15 @@ def _s3_client():
     return boto3.client('s3', **kwargs)
 
 
-def _sync_areas(conn, silver_key: str):
-    """TRUNCATE + INSERT das áreas a partir do silver S3. Se não existir, esvazia."""
+def _sync_areas(conn, gold_key: str):
+    """TRUNCATE + INSERT das áreas a partir do gold S3. Se não existir, esvazia."""
     import io as _io
     s3 = _s3_client()
     t = _t('flooding_areas')
     cur = conn.cursor()
     cur.execute(f"TRUNCATE TABLE {t}")
     try:
-        obj = s3.get_object(Bucket=AWS_S3_SILVER_BUCKET, Key=silver_key)
+        obj = s3.get_object(Bucket=AWS_S3_GOLD_BUCKET, Key=gold_key)
         gdf = gpd.read_parquet(_io.BytesIO(obj['Body'].read()))
         for idx, row in gdf.iterrows():
             cur.execute(
@@ -178,8 +178,8 @@ def load_to_postgis(sync_areas: bool = True, sync_citizens: bool = True) -> bool
         _ensure_tables(conn)
 
         if sync_areas:
-            silver_key = f"{USE_CASE}/silver_{FLOODING_AREAS_FILE}"
-            _sync_areas(conn, silver_key)
+            gold_key = f"{USE_CASE}/{FLOODING_AREAS_FILE}"
+            _sync_areas(conn, gold_key)
 
         if sync_citizens:
             gold_keys = {
