@@ -7,12 +7,6 @@ import os
 from datetime import datetime
 import logging
 
-try:
-    import folium
-    HAS_FOLIUM = True
-except ImportError:
-    HAS_FOLIUM = False
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -87,77 +81,8 @@ def index():
 
 @app.route('/map')
 def map_view():
-    if not HAS_FOLIUM:
-        return "Folium não instalado.", 501
     use_case = request.args.get('use_case', DEFAULT_USE_CASE)
-    conn = get_db_connection()
-    if not conn:
-        return "Banco de dados offline", 500
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cursor.execute(f"""
-            SELECT citizen_id, name, address, phone,
-                   ST_Y(geometry) as lat, ST_X(geometry) as lon,
-                   affected_by_flooding
-            FROM {tbl(use_case, 'citizens')} ORDER BY citizen_id
-        """)
-        citizens = cursor.fetchall()
-
-        cursor.execute(f"""
-            SELECT area_id, area_name, flood_date, severity,
-                   ST_Y(ST_Centroid(geometry)) as lat,
-                   ST_X(ST_Centroid(geometry)) as lon,
-                   ST_AsGeoJSON(geometry) as geometry
-            FROM {tbl(use_case, 'flooding_areas')} ORDER BY area_id
-        """)
-        flood_areas = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        m = folium.Map(location=[-30.0277, -51.2287], zoom_start=12, tiles='OpenStreetMap')
-        affected_group   = folium.FeatureGroup(name='Cidadãos Afetados (Vermelho)', show=True)
-        unaffected_group = folium.FeatureGroup(name='Cidadãos Não Afetados (Azul)', show=True)
-        flood_group      = folium.FeatureGroup(name='Áreas de Enchente (Verde)', show=True)
-
-        for c in citizens:
-            if c['lat'] and c['lon']:
-                color  = 'red' if c['affected_by_flooding'] else 'blue'
-                icon   = 'exclamation-triangle' if c['affected_by_flooding'] else 'info-sign'
-                popup  = (f"<b>{c['name']}</b><br>ID: {c['citizen_id']}<br>"
-                          f"Endereço: {c['address']}<br>Telefone: {c['phone']}<br>"
-                          f"Status: {'🔴 AFETADO' if c['affected_by_flooding'] else '🟢 SEGURO'}")
-                marker = folium.Marker(
-                    location=[c['lat'], c['lon']],
-                    popup=folium.Popup(popup, max_width=300),
-                    icon=folium.Icon(color=color, icon=icon, prefix='glyphicon')
-                )
-                (affected_group if c['affected_by_flooding'] else unaffected_group).add_child(marker)
-
-        for area in flood_areas:
-            if area['geometry']:
-                folium.GeoJson(
-                    json.loads(area['geometry']),
-                    style_function=lambda x: {
-                        'fillColor': 'green', 'color': 'darkgreen',
-                        'weight': 2, 'opacity': 0.7, 'fillOpacity': 0.3
-                    },
-                    popup=folium.Popup(
-                        f"<b>{area['area_name']}</b><br>Data: {area['flood_date']}<br>Severidade: {area['severity']}",
-                        max_width=300
-                    )
-                ).add_to(flood_group)
-
-        m.add_child(affected_group)
-        m.add_child(unaffected_group)
-        m.add_child(flood_group)
-        folium.LayerControl().add_to(m)
-        return m._repr_html_()
-
-    except Exception as e:
-        logger.error(f"Erro ao gerar mapa: {e}")
-        cursor.close()
-        conn.close()
-        return f"Erro: {str(e)}", 500
+    return render_template('map.html', use_case=use_case)
 
 
 @app.route('/api/geojson')

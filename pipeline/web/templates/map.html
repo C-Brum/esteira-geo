@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa — {{ use_case }}</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; }
+        #map { width: 100vw; height: 100vh; }
+        #controls {
+            position: absolute; top: 10px; left: 50px; z-index: 1000;
+            background: white; border-radius: 8px; padding: 12px 16px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        }
+        #controls strong { font-size: 13px; color: #333; }
+        .badge {
+            padding: 3px 10px; border-radius: 12px; font-size: 12px;
+            font-weight: 600; color: white;
+        }
+        .badge-total    { background: #667eea; }
+        .badge-affected { background: #f5576c; }
+        .badge-safe     { background: #4facfe; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 2000; background: white; padding: 20px 32px; border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-size: 15px; color: #333;
+        }
+        #back {
+            position: absolute; bottom: 20px; left: 10px; z-index: 1000;
+            background: white; border-radius: 6px; padding: 8px 14px;
+            text-decoration: none; font-size: 13px; color: #333;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        #back:hover { background: #f0f0f0; }
+    </style>
+</head>
+<body>
+<div id="loading">⏳ Carregando dados...</div>
+<div id="map"></div>
+<div id="controls" style="display:none">
+    <strong>{{ use_case }}</strong>
+    <span class="badge badge-total"   id="b-total">—</span>
+    <span class="badge badge-affected" id="b-affected">—</span>
+    <span class="badge badge-safe"    id="b-safe">—</span>
+</div>
+<a href="/?use_case={{ use_case }}" id="back">← Dashboard</a>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+const USE_CASE = "{{ use_case }}";
+
+const map = L.map('map');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 19
+}).addTo(map);
+
+// Camadas
+const floodLayer    = L.layerGroup().addTo(map);
+const affectedCluster   = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 }).addTo(map);
+const unaffectedCluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 }).addTo(map);
+
+L.control.layers({}, {
+    '🔴 Afetados':        affectedCluster,
+    '🔵 Não Afetados':    unaffectedCluster,
+    '🟢 Áreas de Enchente': floodLayer,
+}, { collapsed: false }).addTo(map);
+
+fetch(`/api/geojson?use_case=${USE_CASE}`)
+    .then(r => r.json())
+    .then(data => {
+        let total = 0, affected = 0, safe = 0;
+        const bounds = [];
+
+        data.features.forEach(f => {
+            const p = f.properties;
+            const coords = f.geometry.coordinates;
+
+            if (p.type === 'citizen') {
+                total++;
+                const lat = coords[1], lon = coords[0];
+                bounds.push([lat, lon]);
+                const color = p.affected ? '#f5576c' : '#4facfe';
+                const marker = L.circleMarker([lat, lon], {
+                    radius: 6, fillColor: color, color: '#fff',
+                    weight: 1, opacity: 1, fillOpacity: 0.85
+                }).bindPopup(
+                    `<b>${p.name}</b><br>ID: ${p.id}<br>${p.address}<br>
+                     <span style="color:${color};font-weight:600">
+                     ${p.affected ? '🔴 AFETADO' : '🔵 SEGURO'}</span>`
+                );
+                if (p.affected) { affected++; affectedCluster.addLayer(marker); }
+                else            { safe++;     unaffectedCluster.addLayer(marker); }
+
+            } else if (p.type === 'flood_area') {
+                const poly = L.geoJSON(f, {
+                    style: { color: '#2d6a4f', weight: 2, fillColor: '#52b788', fillOpacity: 0.35 }
+                }).bindPopup(`<b>${p.name}</b><br>Data: ${p.date || '—'}<br>Severidade: ${p.severity}`);
+                floodLayer.addLayer(poly);
+            }
+        });
+
+        // Atualizar badges
+        document.getElementById('b-total').textContent    = `Total: ${total}`;
+        document.getElementById('b-affected').textContent = `Afetados: ${affected}`;
+        document.getElementById('b-safe').textContent     = `Seguros: ${safe}`;
+        document.getElementById('controls').style.display = 'flex';
+        document.getElementById('loading').style.display  = 'none';
+
+        if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+    })
+    .catch(e => {
+        document.getElementById('loading').textContent = '❌ Erro ao carregar dados: ' + e.message;
+    });
+</script>
+</body>
+</html>
