@@ -63,7 +63,7 @@ S3_SILVER_PREFIX = f'{USE_CASE}/'
 S3_GOLD_PREFIX   = f'{USE_CASE}/'
 
 # File names
-FLOODING_AREAS_FILE = 'flooding_areas_porto_alegre.parquet'
+FLOODING_AREAS_FILE = 'flooding_areas.parquet'
 CITIZENS_FILE = 'citizens_data.parquet'
 AFFECTED_CITIZENS_FILE = 'affected_citizens.parquet'
 UNAFFECTED_CITIZENS_FILE = 'unaffected_citizens.parquet'

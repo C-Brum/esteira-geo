@@ -210,8 +210,8 @@ def process_gold():
     logger.info("=" * 60)
     
     # Carregar dados normalizados da Silver
-    flooding_silver = load_from_silver(f"silver_flooding_areas_porto_alegre.parquet")
-    citizens_silver = load_from_silver(f"silver_citizens_data.parquet")
+    flooding_silver = load_from_silver(f"silver_{FLOODING_AREAS_FILE}")
+    citizens_silver = load_from_silver(f"silver_{CITIZENS_FILE}")
     
     # Realizar batimento geográfico
     spatial_joined = perform_spatial_join(flooding_silver, citizens_silver)
