@@ -55,7 +55,7 @@
 <script>
 const USE_CASE = "{{ use_case }}";
 
-const map = L.map('map');
+const map = L.map('map').setView([-15.78, -47.93], 4);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap', maxZoom: 19
 }).addTo(map);
@@ -76,6 +76,7 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
     .then(data => {
         let total = 0, affected = 0, safe = 0;
         const bounds = [];
+        const areaBounds = [];
 
         data.features.forEach(f => {
             const p = f.properties;
@@ -86,10 +87,19 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
                 const lat = coords[1], lon = coords[0];
                 bounds.push([lat, lon]);
                 const color = p.affected ? '#f5576c' : '#4facfe';
-                const marker = L.circleMarker([lat, lon], {
-                    radius: 6, fillColor: color, color: '#fff',
-                    weight: 1, opacity: 1, fillOpacity: 0.85
-                }).bindPopup(
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="24" viewBox="0 0 20 24">
+                    <circle cx="10" cy="5" r="4" fill="${color}"/>
+                    <path d="M2 20 Q2 12 10 12 Q18 12 18 20" fill="${color}"/>
+                    <line x1="10" y1="24" x2="10" y2="20" stroke="${color}" stroke-width="2"/>
+                </svg>`;
+                const icon = L.divIcon({
+                    html: svg,
+                    className: '',
+                    iconSize: [20, 24],
+                    iconAnchor: [10, 24],
+                    popupAnchor: [0, -24]
+                });
+                const marker = L.marker([lat, lon], { icon }).bindPopup(
                     `<b>${p.name}</b><br>ID: ${p.id}<br>${p.address}<br>
                      <span style="color:${color};font-weight:600">
                      ${p.affected ? '🔴 AFETADO' : '🔵 SEGURO'}</span>`
@@ -102,6 +112,11 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
                     style: { color: '#2d6a4f', weight: 2, fillColor: '#52b788', fillOpacity: 0.35 }
                 }).bindPopup(`<b>${p.name}</b><br>Data: ${p.date || '—'}<br>Severidade: ${p.severity}`);
                 floodLayer.addLayer(poly);
+                // Extrair bounds diretamente das coordenadas GeoJSON
+                const rings = f.geometry.type === 'Polygon'
+                    ? f.geometry.coordinates
+                    : f.geometry.coordinates.flat();
+                rings[0].forEach(c => areaBounds.push([c[1], c[0]]));
             }
         });
 
@@ -112,7 +127,10 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
         document.getElementById('controls').style.display = 'flex';
         document.getElementById('loading').style.display  = 'none';
 
-        if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+        // Centralizar: cidadãos têm prioridade; fallback para áreas
+        if (bounds.length)      map.fitBounds(bounds, { padding: [30, 30] });
+        else if (areaBounds.length) map.fitBounds(areaBounds, { padding: [40, 40] });
+        else                    map.setView([-15.78, -47.93], 4); // Brasil
     })
     .catch(e => {
         document.getElementById('loading').textContent = '❌ Erro ao carregar dados: ' + e.message;

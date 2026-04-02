@@ -140,6 +140,27 @@ def _move_to_processed(s3, key: str):
     logger.info(f"→ Movido para processados/: {filename}")
 
 
+def _safe_concat(frames: list) -> gpd.GeoDataFrame:
+    """Concatena GeoDataFrames tolerando schemas e precisões de datetime diferentes.
+    Serializa geometria e datetimes para string antes do concat e restaura depois.
+    """
+    datetime_cols = set()
+    normalized = []
+    for gdf in frames:
+        df = gdf.copy()
+        df['geometry'] = df.geometry.to_wkt()
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].astype(str)
+                datetime_cols.add(col)
+        normalized.append(df)
+    combined = pd.concat(normalized, ignore_index=True, join='outer')
+    for col in datetime_cols:
+        if col in combined.columns:
+            combined[col] = pd.to_datetime(combined[col], errors='coerce')
+    combined['geometry'] = gpd.GeoSeries.from_wkt(combined['geometry'])
+    return gpd.GeoDataFrame(combined, geometry='geometry', crs='EPSG:4326')
+
 def silver_exists(filename: str) -> bool:
     """Verifica se um arquivo silver existe no bucket S3."""
     try:
@@ -185,6 +206,7 @@ def process_silver(bronze_prefix: str = None, move_files: bool = True) -> dict:
 
     flooding_frames = []
     citizen_frames  = []
+    processed_keys  = []  # só move para processados/ após salvar no silver
 
     for key in keys:
         filename = key.split('/')[-1]
@@ -196,7 +218,7 @@ def process_silver(bronze_prefix: str = None, move_files: bool = True) -> dict:
             else:
                 citizen_frames.append(_normalize_citizens(gdf))
                 logger.info(f"✓ Cidadãos: {filename}")
-            _move_to_processed(s3, key)
+            processed_keys.append(key)
         except Exception as e:
             logger.error(f"✗ Erro ao processar {filename}: {e}")
 
@@ -204,18 +226,13 @@ def process_silver(bronze_prefix: str = None, move_files: bool = True) -> dict:
 
     # Áreas de enchente
     if flooding_frames:
-        new_flooding = gpd.GeoDataFrame(
-            pd.concat(flooding_frames, ignore_index=True), geometry='geometry', crs='EPSG:4326'
-        )
+        new_flooding = _safe_concat(flooding_frames)
         # Mesclar com silver existente (acumulativo)
         silver_key = f"{SILVER_PREFIX}silver_{FLOODING_AREAS_FILE}"
         try:
             obj = s3.get_object(Bucket=AWS_S3_SILVER_BUCKET, Key=silver_key)
             existing = gpd.read_parquet(io.BytesIO(obj['Body'].read()))
-            combined = gpd.GeoDataFrame(
-                pd.concat([existing, new_flooding], ignore_index=True),
-                geometry='geometry', crs='EPSG:4326'
-            )
+            combined = _safe_concat([existing, new_flooding])
             logger.info(f"✓ Mesclando {len(existing)} áreas existentes + {len(new_flooding)} novas")
         except Exception:
             combined = new_flooding
@@ -233,18 +250,13 @@ def process_silver(bronze_prefix: str = None, move_files: bool = True) -> dict:
 
     # Cidadãos
     if citizen_frames:
-        new_citizens = gpd.GeoDataFrame(
-            pd.concat(citizen_frames, ignore_index=True), geometry='geometry', crs='EPSG:4326'
-        )
+        new_citizens = _safe_concat(citizen_frames)
         # Mesclar com silver existente (acumulativo)
         silver_key = f"{SILVER_PREFIX}silver_{CITIZENS_FILE}"
         try:
             obj = s3.get_object(Bucket=AWS_S3_SILVER_BUCKET, Key=silver_key)
             existing = gpd.read_parquet(io.BytesIO(obj['Body'].read()))
-            combined = gpd.GeoDataFrame(
-                pd.concat([existing, new_citizens], ignore_index=True),
-                geometry='geometry', crs='EPSG:4326'
-            )
+            combined = _safe_concat([existing, new_citizens])
             logger.info(f"✓ Mesclando {len(existing)} existentes + {len(new_citizens)} novos")
         except Exception:
             combined = new_citizens
@@ -258,6 +270,10 @@ def process_silver(bronze_prefix: str = None, move_files: bool = True) -> dict:
     if not result:
         BRONZE_PREFIX, PROCESSED_PREFIX = _orig_bronze, _orig_processed
         raise RuntimeError("Nenhum arquivo válido processado do bronze.")
+
+    # Move para processados/ somente após silver salvo com sucesso
+    for key in processed_keys:
+        _move_to_processed(s3, key)
 
     BRONZE_PREFIX, PROCESSED_PREFIX = _orig_bronze, _orig_processed
     logger.info("=" * 60)

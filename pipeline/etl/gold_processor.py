@@ -201,6 +201,23 @@ def silver_ready() -> tuple[bool, bool]:
     return has_areas, has_citizens
 
 
+def process_gold_areas_only():
+    """
+    Salva apenas as áreas no gold quando não há cidadãos no silver.
+    Garante que o PostGIS sempre leia do gold.
+    """
+    logger.info("=" * 60)
+    logger.info("GOLD PROCESSOR - Apenas áreas (sem cidadãos)")
+    logger.info("=" * 60)
+
+    flooding_silver = load_from_silver(f"silver_{FLOODING_AREAS_FILE}")
+    save_to_gold(flooding_silver, FLOODING_AREAS_FILE)
+
+    logger.info(f"✓ Gold de áreas salvo: {len(flooding_silver)} registros")
+    logger.info("=" * 60)
+    return flooding_silver
+
+
 def process_gold():
     """
     Orquestrador: processamento geoespacial completo
