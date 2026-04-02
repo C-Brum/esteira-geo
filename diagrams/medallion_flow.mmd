@@ -1,66 +1,63 @@
 graph LR
     subgraph input["📥 Ingestão\nbronze/automatizado/"]
-        uc_poa["enchentes_poa/\nCSV + GeoJSON\n(cidadãos e áreas)"]
-        uc_mg["enchentes_mg/\nCSV + GeoJSON\n(cidadãos e áreas)"]
-        uc_rj["enchentes_rj/\nCSV + GeoJSON\n(cidadãos e áreas)"]
-        processed["processados/\n(movido após leitura)"]
+        uc_a["use_case_a/\nCSV + GeoJSON"]
+        uc_b["use_case_b/\nCSV + GeoJSON"]
+        processed["processados/\n(movido após silver salvo)"]
     end
 
-    subgraph watcher["👁️ Watcher\nwatch_bronze.py"]
-        poll["Polling S3\na cada 10s\nPrefix: automatizado/\nDetecta use_case\npelo caminho do arquivo"]
-    end
-
-    subgraph bronze_layer["🟤 BRONZE\nS3: bronze/automatizado/use_case/"]
-        b_files["CSV / GeoJSON\nbrutos\n(sem transformação)"]
+    subgraph airflow["⚙️ Airflow\nesteira_geo_watcher → esteira_geo"]
+        sensor["detecta_e_dispara\na cada 30s\nignora use_cases já ativos"]
+        branch["branch_gold\nverifica silver acumulado total\nnão apenas o lote atual"]
+        sensor --> branch
     end
 
     subgraph silver_layer["⚪ SILVER\nS3: silver/use_case/"]
-        s_areas["silver_flooding_areas.parquet\nAcumulativo por area_id\n(keep last)"]
-        s_citizens["silver_citizens_data.parquet\nAcumulativo por citizen_id\n(keep last)"]
-        s_checks["Normalização:\n✓ Geometrias válidas\n✓ citizen_id → str\n✓ area_id → str\n✓ registration_date\n✓ Dedup por ID"]
+        s_areas["silver_flooding_areas.parquet\nAcumulativo por area_id\n_safe_concat (schema-tolerante)"]
+        s_citizens["silver_citizens_data.parquet\nAcumulativo por citizen_id\n_safe_concat (schema-tolerante)"]
+        s_checks["Normalização:\n✓ Geometrias válidas\n✓ citizen_id → str\n✓ registration_date\n✓ Dedup por ID\n✓ WKT + datetime str antes concat"]
     end
 
-    subgraph gold_layer["🟡 GOLD\nS3: gold/use_case/"]
-        g_join["🎯 Spatial Join\ngeopandas sjoin\nwithin / intersects"]
+    subgraph gold_layer["🟡 GOLD\nS3: gold/use_case/\nFonte exclusiva do PostGIS"]
+        g_areas_only["flooding_areas.parquet\n(process_gold_areas_only)\ngerado mesmo sem cidadãos"]
+        g_join["🎯 Spatial Join\ngeopandas sjoin within"]
         g_affected["affected_citizens.parquet"]
         g_unaffected["unaffected_citizens.parquet"]
         g_all["all_citizens_evaluated.parquet"]
-        g_areas["flooding_areas.parquet\n(fonte das áreas\npara o PostGIS)"]
     end
 
     subgraph postgis["🗺️ PostGIS\nesteira_geo"]
-        pg_citizens["use_case_citizens\ngeometry POINT 4326\naffected_by_flooding\nGIST index"]
-        pg_areas["use_case_flooding_areas\ngeometry POLYGON 4326\nGIST index"]
-        pg_note["Fonte exclusiva: GOLD\nTRUNCATE + INSERT\na cada pipeline"]
+        pg_areas["use_case_flooding_areas\nGEOMETRY POLYGON 4326\nGIST index"]
+        pg_citizens["use_case_citizens\nGEOMETRY POINT 4326\naffected_by_flooding\nGIST index"]
+        pg_note["Fonte: GOLD\nTRUNCATE + INSERT\na cada pipeline"]
     end
 
-    subgraph flask["🌐 Flask\nPort 5000"]
-        api_stats["/api/stats?use_case="]
+    subgraph flask["🌐 Flask :5000"]
+        api_stats["/api/stats?use_case=\nfallback automático\npara use_case disponível"]
         api_geojson["/api/geojson?use_case="]
         api_uc["/api/use_cases"]
-        map_leaflet["/map\nLeaflet + MarkerCluster\ncircleMarker\nfitBounds automático"]
+        map_leaflet["/map\nLeaflet + SVG markers\nfitBounds em áreas\nquando sem cidadãos"]
     end
 
-    input --> watcher
-    watcher -->|"USE_CASE=enchentes_poa\nmain.py"| bronze_layer
-    watcher -->|"USE_CASE=enchentes_mg\nmain.py"| bronze_layer
-    watcher -->|"USE_CASE=enchentes_rj\nmain.py"| bronze_layer
+    input --> airflow
 
-    bronze_layer --> s_checks
+    airflow -->|"Task: silver"| s_checks
     s_checks --> s_areas
     s_checks --> s_citizens
+
+    s_areas -->|"só áreas\nprocess_gold_areas_only"| g_areas_only
     s_areas --> g_join
     s_citizens --> g_join
     g_join --> g_affected
     g_join --> g_unaffected
     g_join --> g_all
-    s_areas -->|cópia para gold| g_areas
 
+    g_areas_only --> pg_areas
     g_affected --> pg_citizens
     g_unaffected --> pg_citizens
-    g_areas --> pg_areas
-    pg_note --- pg_citizens
+    g_all -.->|"all_citizens\n(referência)"| pg_citizens
+
     pg_note --- pg_areas
+    pg_note --- pg_citizens
 
     pg_citizens --> api_stats
     pg_citizens --> api_geojson
@@ -69,13 +66,11 @@ graph LR
     api_geojson --> map_leaflet
     api_uc --> map_leaflet
 
-    uc_poa -->|arquivo processado| processed
-    uc_mg -->|arquivo processado| processed
-    uc_rj -->|arquivo processado| processed
+    uc_a -->|"após silver salvo"| processed
+    uc_b -->|"após silver salvo"| processed
 
     style input fill:#4E342E,stroke:#000,color:#fff
-    style watcher fill:#6A1B9A,stroke:#000,color:#fff
-    style bronze_layer fill:#5D4037,stroke:#000,color:#fff
+    style airflow fill:#017CEE,stroke:#000,color:#fff
     style silver_layer fill:#616161,stroke:#000,color:#fff
     style gold_layer fill:#F9A825,stroke:#000,color:#000
     style postgis fill:#336791,stroke:#000,color:#fff

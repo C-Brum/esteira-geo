@@ -1,35 +1,38 @@
 graph TB
     subgraph user["👤 Developer/Admin"]
-        tf["Terraform\n>= 1.0"]
+        tf["Terraform >= 1.0"]
         ansible["Ansible"]
     end
 
     subgraph aws["☁️ AWS Cloud"]
-        aws_vpc["VPC + Security Groups"]
-        aws_s3_b["S3: Bronze Bucket\nautomatizado/use_case/\nRaw CSV/GeoJSON"]
-        aws_s3_s["S3: Silver Bucket\nuse_case/\nNormalizado + Acumulativo"]
-        aws_s3_g["S3: Gold Bucket\nuse_case/\nSpatial Join Results\n+ flooding_areas"]
-        aws_ec2_proc["EC2: Processing VM\nPython pipeline\nwatcher + main.py"]
+        aws_s3_b["S3: Bronze\nautomatizado/use_case/"]
+        aws_s3_s["S3: Silver\nuse_case/"]
+        aws_s3_g["S3: Gold\nuse_case/"]
+        aws_ec2_proc["EC2: Processing VM\nAirflow Scheduler\n+ Pipeline ETL\n+ DAGs"]
         aws_ec2_web["EC2: Presentation VM\nFlask + Nginx\nLeaflet Dashboard"]
-        aws_rds["RDS PostgreSQL\n+ PostGIS\nuse_case_citizens\nuse_case_flooding_areas"]
+        aws_rds["RDS PostgreSQL\n+ PostGIS\nuse_case_citizens\nuse_case_flooding_areas\n+ Airflow metadata"]
     end
 
     subgraph huawei["☁️ Huawei Cloud\nSão Paulo"]
-        hw_vpc["VPC + Security Groups"]
-        hw_obs_b["OBS: Bronze Bucket\nautomatizado/use_case/\nRaw CSV/GeoJSON"]
-        hw_obs_s["OBS: Silver Bucket\nuse_case/\nNormalizado + Acumulativo"]
-        hw_obs_g["OBS: Gold Bucket\nuse_case/\nSpatial Join Results\n+ flooding_areas"]
-        hw_ecs_proc["ECS: Processing VM\nPython pipeline\nwatcher + main.py"]
+        hw_obs_b["OBS: Bronze\nautomatizado/use_case/"]
+        hw_obs_s["OBS: Silver\nuse_case/"]
+        hw_obs_g["OBS: Gold\nuse_case/"]
+        hw_ecs_proc["ECS: Processing VM\nAirflow Scheduler\n+ Pipeline ETL\n+ DAGs"]
         hw_ecs_web["ECS: Presentation VM\nFlask + Nginx\nLeaflet Dashboard"]
-        hw_rds["RDS PostgreSQL\n+ PostGIS\nuse_case_citizens\nuse_case_flooding_areas"]
+        hw_rds["RDS PostgreSQL\n+ PostGIS\nuse_case_citizens\nuse_case_flooding_areas\n+ Airflow metadata"]
     end
 
-    subgraph pipeline["🔄 Pipeline (por use_case)"]
-        p_watcher["Watcher\nautomatizado/use_case/\n→ detecta use_case\n→ dispara main.py"]
-        p_silver["Silver Processor\nNormaliza + Acumula\nCSV / GeoJSON → Parquet"]
-        p_gold["Gold Processor\nSpatial Join\nafetados / não afetados"]
-        p_postgis["PostGIS Loader\nTRUNCATE + INSERT\nFonte: gold bucket"]
-        p_watcher --> p_silver --> p_gold --> p_postgis
+    subgraph pipeline["🔄 Pipeline — DAG: esteira_geo"]
+        p_watcher["esteira_geo_watcher\nMonitora bronze/automatizado/\na cada 30s por use_case"]
+        p_silver["Task: silver\nprocess_silver()\n_safe_concat\nAcumula por ID"]
+        p_branch["branch_gold\nverifica silver acumulado"]
+        p_gold["Task: gold\nprocess_gold()\nSpatial Join"]
+        p_gold_areas["Task: postgis_areas_only\nprocess_gold_areas_only()\n+ load_to_postgis()"]
+        p_postgis["Task: postgis\nload_to_postgis()\nTRUNCATE + INSERT\nFonte: gold bucket"]
+        p_manut["esteira_geo_manutencao\nLimpeza diária\n30 dias de histórico"]
+        p_watcher --> p_silver --> p_branch
+        p_branch --> p_gold --> p_postgis
+        p_branch --> p_gold_areas
     end
 
     user -->|terraform apply| aws
@@ -39,13 +42,13 @@ graph TB
     user -->|ansible-playbook processing.yml| hw_ecs_proc
     user -->|ansible-playbook presentation.yml| hw_ecs_web
 
-    aws_ec2_proc -->|executa| pipeline
+    aws_ec2_proc -->|executa DAGs| pipeline
     pipeline -->|lê bronze| aws_s3_b
     pipeline -->|escreve silver| aws_s3_s
     pipeline -->|escreve gold| aws_s3_g
     pipeline -->|sincroniza| aws_rds
 
-    hw_ecs_proc -->|executa| pipeline
+    hw_ecs_proc -->|executa DAGs| pipeline
     pipeline -->|lê bronze| hw_obs_b
     pipeline -->|escreve silver| hw_obs_s
     pipeline -->|escreve gold| hw_obs_g
@@ -56,5 +59,5 @@ graph TB
 
     style aws fill:#FF9900,stroke:#000,color:#000
     style huawei fill:#E60012,stroke:#000,color:#fff
-    style pipeline fill:#4CAF50,stroke:#000,color:#fff
+    style pipeline fill:#017CEE,stroke:#000,color:#fff
     style user fill:#2196F3,stroke:#000,color:#fff
