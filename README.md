@@ -1,11 +1,17 @@
 # Esteira Geo — Workspace
 
-Workspace completo para uma **esteira de processamento de dados geográficos** usando arquitetura **Medallion** (Bronze → Silver → Gold).
+Workspace completo para uma **esteira de processamento de dados geográficos** usando arquitetura **Medallion** (Bronze → Silver → Gold), orquestrada pelo **Apache Airflow**.
 
 ## 📋 Estrutura do Projeto
 
 ```
 esteira-geo/
+├── airflow/                # Orquestração com Apache Airflow
+│   ├── Dockerfile          # Imagem Airflow com dependências geoespaciais
+│   └── dags/
+│       ├── esteira_geo_dag.py           # DAG principal (silver → gold → postgis)
+│       ├── esteira_geo_watcher_dag.py   # Watcher S3 (dispara pipeline a cada 30s)
+│       └── esteira_geo_manutencao_dag.py # Limpeza diária do histórico (30 dias)
 ├── terraform/              # Infraestrutura como código (multi-cloud)
 │   ├── modules/
 │   │   ├── aws/           # Módulo AWS (S3, EC2, RDS)
@@ -18,54 +24,63 @@ esteira-geo/
 │   └── [main.tf, providers.tf, variables.tf, outputs.tf]
 ├── pipeline/              # Esteira de processamento em Python
 │   ├── etl/
-│   │   ├── bronze_loader.py
-│   │   ├── silver_processor.py
-│   │   ├── gold_processor.py
-│   │   ├── postgis_loader.py
-│   │   └── silver/
-│   │       └── csv_geojson_converter.py
+│   │   ├── bronze_loader.py      # Upload de dados de teste para o bronze
+│   │   ├── silver_processor.py   # Normalização + acumulação (schema-tolerante)
+│   │   ├── gold_processor.py     # Spatial join + process_gold_areas_only()
+│   │   └── postgis_loader.py     # Sincronização PostGIS (sempre lê do gold)
 │   ├── watchers/
-│   │   └── watch_bronze.py
+│   │   └── watch_bronze.py       # Watcher legado (substituído pelo Airflow)
 │   ├── web/
-│   │   ├── app.py         # Flask (multi-caso-de-uso)
-│   │   └── templates/index.html
-│   ├── main.py            # Orquestrador principal
+│   │   ├── app.py                # Flask (multi-use-case, fallback automático)
+│   │   └── templates/
+│   │       ├── index.html
+│   │       └── map.html          # Mapa Leaflet com SVG markers + fitBounds
+│   ├── main.py            # Orquestrador legado (uso sem Airflow)
 │   ├── config.py          # Configuração (USE_CASE, paths, credenciais)
 │   └── requirements.txt
 ├── notebooks/             # Notebooks Jupyter interativos
-│   └── esteira_geo.ipynb  # Fluxo completo Bronze → Silver → Gold → PostGIS
+│   ├── esteira_geo.ipynb  # Fluxo completo Bronze → Silver → Gold → PostGIS
+│   └── utilitarios.ipynb  # Funções de manutenção (limpar banco, silver, gold)
 ├── data/
 │   └── bronze/
-│       └── automatizado/          # Área monitorada pelo watcher
-│           ├── enchentes_poa/     # Arquivos CSV/GeoJSON para este use_case
+│       └── automatizado/          # Área monitorada pelo Airflow watcher
+│           ├── enchentes_poa/
 │           ├── enchentes_mg/
 │           └── enchentes_rj/
-├── docs/                  # Documentação
-│   ├── terraform.md
-│   └── huawei-setup.md
+├── monitoring/            # Prometheus + Grafana
+│   ├── prometheus/
+│   │   └── prometheus.yml # Scrape config (MinIO, PostGIS, Airflow)
+│   ├── grafana/
+│   │   └── provisioning/  # Datasource auto-provisionado
+│   └── statsd/
+│       └── mapping.yml    # Mapeamento StatsD → Prometheus (Airflow)
+├── diagrams/              # Diagramas Mermaid da arquitetura
+├── docs/                  # Documentação técnica
 └── README.md
 ```
 
 ## 🏗️ Arquitetura
 
-A esteira segue o padrão **Medallion**:
+A esteira segue o padrão **Medallion** orquestrado pelo **Airflow**:
 
-- **Bronze**: Armazenamento bruto de dados (OBS/S3). Área `automatizado/<use_case>/` é monitorada pelo watcher; o restante do bucket é ignorado
-- **Silver**: Dados normalizados e validados (OBS/S3) — acumulativo por `citizen_id`/`area_id`
-- **Gold**: Resultado do batimento geoespacial (OBS/S3 + PostGIS) — única fonte de verdade do PostGIS
+- **Bronze**: Dados brutos (S3/OBS). Prefixo `automatizado/<use_case>/` monitorado pelo `esteira_geo_watcher`
+- **Silver**: Dados normalizados e validados (S3/OBS) — acumulativo por `citizen_id`/`area_id`, tolerante a schemas diferentes
+- **Gold**: Resultado do batimento geoespacial (S3/OBS) — única fonte de verdade do PostGIS. Sempre gerado antes de sincronizar o banco
+- **PostGIS**: Espelho do gold (TRUNCATE + INSERT a cada execução)
+- **Flask**: Dashboard e APIs — fallback automático para use_case disponível
 
 **Componentes de Infraestrutura**:
-- 2 VMs: `processing` (Python) + `presentation` (web, acesso internet)
-- RDS PostgreSQL com PostGIS (compartilhado com bucket gold)
+- 2 VMs: `processing` (Airflow + Python) + `presentation` (Flask, acesso internet)
+- RDS PostgreSQL com PostGIS (compartilhado: pipeline + Airflow metadata)
 - 3 buckets OBS/S3 (bronze, silver, gold)
 
 ---
 
-## � Desenvolvimento Local com Docker
+## 🐳 Desenvolvimento Local com Docker
 
 **Opção recomendada para desenvolvimento e testes locais sem credenciais de nuvem.**
 
-O ambiente Docker simula toda a infraestrutura localmente (PostgreSQL + PostGIS + MinIO para S3 + Flask + Pipeline ETL).
+O ambiente Docker simula toda a infraestrutura localmente (PostgreSQL + PostGIS + MinIO + Airflow + Flask + Pipeline ETL).
 
 ### Quick Start Docker
 
@@ -73,73 +88,67 @@ O ambiente Docker simula toda a infraestrutura localmente (PostgreSQL + PostGIS 
 # 1. Iniciar todo o ambiente
 docker compose up -d
 
-# 2. Aguarde ~30 segundos para tudo ficar saudável
+# 2. Aguarde ~60 segundos (Airflow init + serviços)
 docker compose ps
 
-# 3. Executar pipeline ETL
-docker compose exec pipeline python /app/main.py
-
-# 4. Acessar serviços
+# 3. Acessar serviços
+# Airflow UI:       http://localhost:8080  (admin/admin)
 # Dashboard Flask:  http://localhost:5000
 # JupyterLab:       http://localhost:8888/lab?token=esteira
-# MinIO Console:    http://localhost:9001 (user: minioadmin)
-# PostgreSQL:       localhost:5432 (user: esteira_user)
+# MinIO Console:    http://localhost:9001  (minioadmin/minioadmin123)
+# Grafana:          http://localhost:3000  (admin/admin)
+# Prometheus:       http://localhost:9090
+# PostgreSQL:       localhost:5432         (esteira_user/esteira_local_2025)
 ```
 
-### JupyterLab — Processamento Interativo
+### Serviços Docker
 
-O ambiente inclui um container JupyterLab com acesso direto a todos os módulos da esteira, MinIO e PostGIS. Ideal para exploração de dados, depuração e experimentos sem alterar o pipeline principal.
+| Container | Porta | Descrição |
+|-----------|-------|-----------|
+| `esteira-postgis` | 5432 | PostgreSQL + PostGIS (pipeline + Airflow metadata) |
+| `esteira-minio` | 9000/9001 | MinIO — S3 simulado |
+| `esteira-airflow-webserver` | 8080 | Airflow UI |
+| `esteira-airflow-scheduler` | — | Scheduler + executor das DAGs |
+| `esteira-pipeline` | — | Container ETL (idle, testes manuais) |
+| `esteira-web` | 5000 | Flask dashboard |
+| `esteira-jupyter` | 8888 | JupyterLab |
+| `esteira-prometheus` | 9090 | Prometheus (métricas) |
+| `esteira-grafana` | 3000 | Grafana (dashboards) |
+| `esteira-postgres-exporter` | — | Exporter PostGIS → Prometheus |
+| `esteira-statsd-exporter` | 9102 | Exporter Airflow StatsD → Prometheus |
 
-```bash
-# Iniciar apenas o Jupyter (se o ambiente já estiver rodando)
-docker compose up -d jupyter
+### DAGs Airflow
 
-# Acessar
-# http://localhost:8888/lab?token=esteira
-```
+| DAG | Schedule | Descrição |
+|-----|----------|-----------|
+| `esteira_geo_watcher` | a cada 30s | Monitora `bronze/automatizado/`, dispara `esteira_geo` por use_case |
+| `esteira_geo` | manual/trigger | silver → branch → gold → postgis |
+| `esteira_geo_manutencao` | diário | Limpa histórico do banco (mantém 30 dias) |
 
-O notebook `notebooks/esteira_geo.ipynb` replica o fluxo completo do watcher de forma interativa:
+### Ingestão de Dados
 
-| Célula | O que faz |
-|--------|-----------|
-| 0 — Configuração | Define `USE_CASE` e exibe conexões |
-| 1 — Bronze | Lista arquivos no bucket S3/MinIO |
-| 2 — Silver | Executa `process_silver()`, exibe DataFrames normalizados |
-| 3 — Gold | Executa `process_gold()`, mostra resultado do spatial join |
-| 4 — PostGIS | Sincroniza via `load_to_postgis()` |
-| 5 — Consultas SQL | Queries direto no PostGIS |
-| 6 — Mapa | Abre o mapa Leaflet do Flask via IFrame |
-| 7 — Ingestão manual | Upload de arquivo para o bronze + reprocessamento |
-
-Para trocar o use_case, altere `os.environ['USE_CASE']` na célula 0 e reexecute:
-
-```python
-os.environ['USE_CASE'] = 'enchentes_rj'  # ou enchentes_mg, enchentes_poa
-```
-
-Os notebooks são persistidos em `./notebooks/` no host — alterações sobrevivem a restarts do container.
-
-### Ingestão de Dados Externos
-
-O watcher monitora exclusivamente o prefixo `automatizado/<use_case>/` dentro do bucket bronze. Arquivos depositados em qualquer outro caminho do bucket são ignorados.
+Deposite arquivos em `bronze/automatizado/<use_case>/` — o watcher detecta em até 30s e dispara o pipeline automaticamente:
 
 ```
 bronze/
 └── automatizado/
-    ├── enchentes_poa/      ← watcher detecta e dispara USE_CASE=enchentes_poa
+    ├── enchentes_poa/      ← watcher detecta → dispara esteira_geo (use_case=enchentes_poa)
     │   ├── arquivo.csv
-    │   └── processados/    ← movido automaticamente após processar
+    │   └── processados/    ← movido após salvar no silver com sucesso
     ├── enchentes_mg/
     └── enchentes_rj/
 ```
 
-```bash
-# Copiar arquivo para a área automatizada
-cp meus_cidadaos.csv data/bronze/automatizado/enchentes_poa/
+**Via MinIO Console** (http://localhost:9001): faça upload direto para `bronze/automatizado/<use_case>/`
 
-# O watcher detecta em até 10s e dispara o pipeline automaticamente
-# Ou execute manualmente para um use_case específico:
-docker compose exec -e USE_CASE=enchentes_poa pipeline python /app/main.py
+**Via CLI**:
+```bash
+# Upload via bronze_loader (dados sintéticos)
+docker compose exec pipeline python /app/etl/bronze_loader.py
+
+# Trigger manual de um use_case específico
+docker compose exec airflow-scheduler \
+  airflow dags trigger esteira_geo --conf '{"use_case": "enchentes_poa"}'
 ```
 
 **Formatos suportados:**
@@ -148,506 +157,206 @@ docker compose exec -e USE_CASE=enchentes_poa pipeline python /app/main.py
 
 **Normalização automática:** `registered_date` → `registration_date` | `citizen_id` aceita inteiros ou strings (`C003`, `C004`...) | `document_number` sempre lido como string
 
-### Windows PowerShell Helper
+### Cenários do Pipeline
 
-Use o script helper para gerenciar Docker mais facilmente:
+| Conteúdo do bronze | Caminho na DAG | Resultado |
+|---|---|---|
+| Áreas + cidadãos | silver → gold → postgis | Batimento completo no PostGIS |
+| Só áreas | silver → gold_areas_only → postgis_areas_only | Polígonos visíveis no mapa |
+| Só cidadãos | silver → skip_gold | Cidadãos acumulados no silver, aguarda áreas |
+| Bronze vazio | silver (encerra sem retry) | Nenhuma ação |
+
+### Executar Pipeline Manualmente (sem Airflow)
 
 ```bash
-# Ver status dos containers
-.\docker.ps1 status
+# Pipeline completo via main.py
+docker compose exec -e USE_CASE=enchentes_poa pipeline python /app/main.py
 
-# Executar pipeline
-.\docker.ps1 pipeline
-
-# Acessar shell do pipeline
-.\docker.ps1 shell
-
-# Ver logs
-.\docker.ps1 logs pipeline
-
-# Acessar banco de dados
-.\docker.ps1 db
-
-# Abrir MinIO
-.\docker.ps1 minio
-
-# Parar ambiente
-.\docker.ps1 down
-
-# Mais comandos
-.\docker.ps1 help
+# Etapa individual
+docker compose exec pipeline python -c \
+  "from etl.silver_processor import process_silver; process_silver()"
 ```
 
-### Linux/macOS - Bash Scripts & Makefile
+### JupyterLab
 
-**Opção 1: Scripts bash** (recomendado)
+O notebook `notebooks/esteira_geo.ipynb` replica o fluxo completo de forma interativa:
 
+| Célula | O que faz |
+|--------|-----------|
+| 0 — Configuração | Define `USE_CASE` e exibe conexões |
+| 1 — Bronze | Lista arquivos no bucket S3/MinIO |
+| 2 — Silver | `process_silver()` em modo exploratório (não move arquivos) |
+| 3 — Gold | `process_gold()`, mostra resultado do spatial join |
+| 4 — PostGIS | Sincroniza via `load_to_postgis()` |
+| 5 — Consultas SQL | Queries direto no PostGIS |
+| 6 — Mapa | Abre o mapa Leaflet do Flask via IFrame |
+| 7 — Ingestão manual | Upload de arquivo para o bronze + reprocessamento |
+
+O notebook `notebooks/utilitarios.ipynb` oferece funções de manutenção:
+
+| Função | O que faz |
+|--------|-----------|
+| `limpar_banco()` | Remove tabelas de use_case(s) do PostGIS |
+| `limpar_silver_gold()` | Remove objetos dos buckets silver e gold |
+| `mover_processados()` | Devolve arquivos de `processados/` para reprocessamento |
+| `apagar_use_case()` | Remove tudo de um use_case (PostGIS + silver + gold + bronze) |
+
+Todas as funções têm `confirmar=False` por padrão (dry-run) — execute com `confirmar=True` para aplicar.
+
+### Scripts de Gerenciamento
+
+**Linux/macOS:**
 ```bash
-# 1. Fazer scripts executáveis
 chmod +x setup.sh docker.sh debug.sh
-
-# 2. Setup inicial (primeira vez)
-./setup.sh
-
-# 3. Iniciar
-./docker.sh up
-
-# 4. Pipeline
-./docker.sh pipeline
-
-# 5. Status
-./docker.sh status
+./setup.sh        # Setup inicial
+./docker.sh up    # Iniciar
+./docker.sh down  # Parar
 ```
 
-**Opção 2: Makefile** (padrão Linux)
+**Windows PowerShell:**
+```powershell
+.\docker.ps1 status
+.\docker.ps1 pipeline
+.\docker.ps1 down
+```
 
+**Makefile:**
 ```bash
-make setup   # Setup (primeira vez)
-make up      # Iniciar
+make up       # Iniciar
 make pipeline # Executar pipeline
-make test    # Testes
-make logs-pipeline
-make db      # Banco de dados
-make down    # Parar
+make down     # Parar
 ```
-
-**Para mais detalhes**: Veja [SCRIPTS_BASH.md](./SCRIPTS_BASH.md) e [pipeline/DOCKER.md](./pipeline/DOCKER.md)
 
 ---
 
-## 🚀 Como Configurar e Deploy em Nuvem
+## 🚀 Deploy em Nuvem
 
 ### Pré-requisitos
 
 1. **Terraform** >= 1.0
-   ```bash
-   # Windows (via Chocolatey)
-   choco install terraform
-   
-   # Ou download direto: https://www.terraform.io/downloads
-   terraform --version
-   ```
+2. **Credenciais da Nuvem** (AWS ou Huawei Cloud)
+3. **SSH Key Pair**
 
-2. **Credenciais da Nuvem**
-   - **AWS**: Configure `~/.aws/credentials` ou exporte `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY`
-   - **Huawei Cloud**: Exporte `HW_ACCESS_KEY` e `HW_SECRET_KEY`
+### Deploy AWS
 
-3. **SSH Key Pair** (para acesso às VMs)
-   ```bash
-   # Gere uma chave SSH se não tiver
-   ssh-keygen -t rsa -b 4096 -f $env:USERPROFILE\.ssh\id_rsa
-   ```
-
-### Passo 1: Escolher Nuvem e Ambiente
-
-Defina qual cloud usar editando o arquivo `terraform.tfvars` ou use um dos presets:
-
-**Para Huawei Cloud (São Paulo)**:
-```bash
-cd terraform
-# Copie o arquivo de exemplo
-cp envs/huawei-sp.tfvars terraform.tfvars
-```
-
-**Para AWS**:
 ```bash
 cd terraform
 cp envs/aws.tfvars terraform.tfvars
+export AWS_ACCESS_KEY_ID="sua-access-key"
+export AWS_SECRET_ACCESS_KEY="sua-secret-key"
+terraform init && terraform apply
 ```
 
-### Passo 2: Configurar Credenciais
-
-**AWS** - Exporte credenciais:
-```bash
-$env:AWS_ACCESS_KEY_ID = "sua-access-key"
-$env:AWS_SECRET_ACCESS_KEY = "sua-secret-key"
-```
-
-**Huawei Cloud** - Exporte credenciais:
-```bash
-$env:HW_ACCESS_KEY = "seu-access-key"
-$env:HW_SECRET_KEY = "seu-secret-key"
-```
-
-### Passo 3: Configurar SSH Public Key
-
-Adicione a public key ao arquivo de variáveis:
-
-```bash
-# Obtenha o caminho da public key
-$sshKey = Get-Content $env:USERPROFILE\.ssh\id_rsa.pub
-
-# Adicione ao terraform.tfvars
-echo "ssh_public_key = `"$sshKey`"" >> terraform.tfvars
-```
-
-### Passo 4: Inicializar Terraform
+### Deploy Huawei Cloud (São Paulo)
 
 ```bash
 cd terraform
-terraform init
+cp envs/huawei-sp.tfvars terraform.tfvars
+export HW_ACCESS_KEY="seu-access-key"
+export HW_SECRET_KEY="seu-secret-key"
+terraform init && terraform apply
 ```
 
-### Passo 5: Planejar Deployment
-
-Revise os recursos que serão criados:
+### Outputs do Terraform
 
 ```bash
-terraform plan -out=tfplan
+terraform output  # Exibe IPs das VMs, endpoints RDS, nomes dos buckets
 ```
 
-### Passo 6: Aplicar Infraestrutura
-
-```bash
-terraform apply tfplan
-```
-
-Terraform exibirá os **outputs**:
-- `s3_or_obs_buckets`: Nomes dos buckets (bronze, silver, gold)
-- `processing_public_ip`: IP da VM de processamento
-- `presentation_public_ip`: IP da VM de apresentação (acesso internet)
-- `rds_endpoint`: Endpoint do PostgreSQL (PostGIS)
-
-### Passo 7: Habilitar PostGIS no RDS
-
-Após o deployment, habilite a extensão PostGIS:
-
-```bash
-# Obtenha o endpoint do RDS (do output anterior)
-$rdsEndpoint = terraform output -raw rds_endpoint
-
-# Conecte via psql (certifique-se que psql está instalado)
-# Download: https://www.postgresql.org/download/
-
-psql -h $rdsEndpoint -U postgres -d esteira-geo-huawei-sp
-# Digite a senha (default: postgrespw)
-
-# Dentro do psql:
-CREATE EXTENSION postgis;
-\q
-```
-
-### Passo 8: Acessar as VMs
-
-```bash
-# SSH para VM de processamento
-$processingIP = terraform output -raw processing_public_ip
-ssh -i $env:USERPROFILE\.ssh\id_rsa ec2-user@$processingIP
-
-# SSH para VM de apresentação
-$presentationIP = terraform output -raw presentation_public_ip
-ssh -i $env:USERPROFILE\.ssh\id_rsa ec2-user@$presentationIP
-```
-
----
-
-## 🤖 Passo 9: Automatizar Configuração com Ansible
-
-Após provisionar a infraestrutura, use **Ansible** para configurar automaticamente as VMs.
-
-### 9.1 Instalar Ansible
+### Configurar VMs com Ansible
 
 ```bash
 pip install ansible
-ansible --version
-```
-
-### 9.2 Configurar Inventário
-
-Edite `ansible/inventory.ini` com os IPs das VMs:
-
-```bash
-# Obter IPs do Terraform
-cd terraform
-terraform output -json
-
-# Copie os IPs e atualize inventory.ini
-cd ../ansible
-```
-
-Exemplo `inventory.ini`:
-```ini
-[processing]
-processing-vm ansible_host=10.0.1.10 ansible_user=ec2-user
-
-[presentation]
-presentation-vm ansible_host=10.0.1.11 ansible_user=ec2-user
-
-[all:vars]
-aws_s3_bronze_bucket=esteira-geo-bronze-xxxxx
-aws_s3_silver_bucket=esteira-geo-silver-xxxxx
-aws_s3_gold_bucket=esteira-geo-gold-xxxxx
-rds_host=esteira-geo-postgres.xxxxx.rds.amazonaws.com
-rds_password=postgrespw
-```
-
-### 9.3 Executar Playbooks
-
-**VM de Processamento** (instala Python geoespacial, configura pipeline):
-```bash
 cd ansible
-ansible-playbook -i inventory.ini processing.yml -v
+
+# Editar inventory.ini com os IPs do terraform output
+ansible-playbook -i inventory.ini processing.yml    # VM de processamento (Airflow + pipeline)
+ansible-playbook -i inventory.ini presentation.yml  # VM de apresentação (Flask + Nginx)
 ```
-
-**VM de Apresentação** (instala Flask, Nginx, Gunicorn):
-```bash
-ansible-playbook -i inventory.ini presentation.yml -v
-```
-
-**Ambas ao mesmo tempo**:
-```bash
-ansible-playbook -i inventory.ini processing.yml presentation.yml
-```
-
-### 9.4 Verificar Configuração
-
-```bash
-# Testar health check da apresentação
-$presentationIP = terraform output -raw presentation_public_ip
-curl "http://$presentationIP/health"
-
-# Acessar dashboard Flask
-# Abra navegador: http://<PRESENTATION_IP>/
-```
-
-**Detalhes**: Veja [ansible/README.md](./ansible/README.md) para guia completo.
 
 ---
 
-## � Passo 10: Executar Pipeline de Processamento
+## 📊 Verificar Dados
 
-O pipeline implementa um **caso de uso completo de batimento geográfico**: identifica cidadãos atingidos por enchentes em Porto Alegre através de spatial join.
-
-### 10.1 Estrutura do Pipeline (Medallion)
-
-```
-Bronze → Silver → Gold → PostGIS → Flask
-```
-
-**Bronze**: Dados brutos (3 áreas de enchente + 100 cidadãos)
-**Silver**: Dados normalizados e validados  
-**Gold**: Resultado do batimento geoespacial — afetados + não afetados, sem duplicatas por citizen_id
-**PostGIS**: Armazenamento em RDS com índices espaciais
-**Flask**: APIs e dashboard
-
-### 10.2 Configurar e Executar
+### PostGIS
 
 ```bash
-# Setup local (desenvolvimento)
-cd pipeline
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+docker compose exec postgis psql -U esteira_user -d esteira_geo
 
-# Configurar variáveis de ambiente (.env)
-$env:RDS_HOST = "<RDS_ENDPOINT>"
-$env:RDS_PASSWORD = "postgrespw"
-$env:AWS_S3_BRONZE_BUCKET = "esteira-geo-bronze-xxxxx"
-$env:USE_CASE = "enchentes_poa"
+-- Listar use_cases disponíveis
+SELECT tablename FROM pg_tables WHERE tablename LIKE '%_citizens';
 
-# Executar pipeline completo
-python main.py
-
-# Resultado esperado (com dados de exemplo incluídos):
-# ✓ PIPELINE CONCLUÍDO COM SUCESSO!
-#   Cidadãos Atingidos: 114
-#   Cidadãos Não Atingidos: 75
-#   Total Avaliado: 189
-#   Percentual Atingido: 60.3%
+-- Estatísticas de um use_case
+SELECT COUNT(*) as total,
+       SUM(CASE WHEN affected_by_flooding THEN 1 ELSE 0 END) as afetados
+FROM enchentes_poa_citizens;
 ```
 
-### 10.3 Testes do Pipeline
-
-Veja [pipeline/TESTES_CSV_GEOJSON.md](./pipeline/TESTES_CSV_GEOJSON.md) para suite completa de testes.
-
-Arquivos de dados de teste disponíveis em `data/bronze/automatizado/enchentes_poa/`:
-
-| Arquivo | Tipo | Cidadãos |
-|---------|------|----------|
-| `citizens_sample.csv` | CSV | C003–C052 (50) |
-| `novos_cidadaos_poa.csv` | CSV | C053–C067 (15) |
-| `novos_pontos_a.csv` | CSV | C068–C073 (6) |
-| `novos_pontos_b.geojson` | GeoJSON | C074–C079 (6) |
-| `novos_pontos_c.csv` | CSV | C080–C085 (6) |
-| `novos_pontos_d.geojson` | GeoJSON | C086–C091 (6) |
-
-### 10.4 Verificar Dados no PostGIS
-
-Tabelas prefixadas pelo caso de uso (`enchentes_poa_citizens`, `enchentes_poa_flooding_areas`):
+### Flask APIs
 
 ```bash
-# Conectar ao banco
-psql -h <RDS_ENDPOINT> -U postgres -d esteira-geo
-
-# Dentro do psql:
-SELECT COUNT(*) as total_citizens FROM enchentes_poa_citizens;
-SELECT COUNT(*) as affected FROM enchentes_poa_citizens WHERE affected_by_flooding = TRUE;
-
-# Ver cidadãos afetados
-SELECT citizen_id, name, ST_AsText(geometry) FROM enchentes_poa_citizens
-WHERE affected_by_flooding = TRUE LIMIT 5;
+curl http://localhost:5000/health
+curl http://localhost:5000/api/use_cases
+curl "http://localhost:5000/api/stats?use_case=enchentes_poa"
+curl "http://localhost:5000/api/geojson?use_case=enchentes_poa"
 ```
-
-### 10.5 Visualizar no Flask
-
-```bash
-curl http://<PRESENTATION_IP>/health
-curl http://<PRESENTATION_IP>/api/stats
-curl http://<PRESENTATION_IP>/api/stats?use_case=enchentes_poa
-curl http://<PRESENTATION_IP>/api/use_cases   # lista casos de uso disponíveis
-curl http://<PRESENTATION_IP>/api/geojson
-
-# Abrir dashboard
-# http://<PRESENTATION_IP>/
-```
-
-**Detalhes**: Veja [pipeline/README.md](./pipeline/README.md) para documentação completa.
-
----
-
-## �📦 Próximos Passos
-
-### 1. Customizar Aplicação Flask
-
-Edite `ansible/roles/presentation/files/app.py` para adicionar endpoints de análise geoespacial customizados:
-- Integração com dados do bucket gold
-- Queries SQL/PostGIS específicas
-- Visualização de mapas (ex: folium, leaflet)
-
-### 2. Implementar Pipeline de Processamento
-
-Desenvolva scripts em `pipeline/main.py` para:
-- Ler dados do bucket bronze
-- Processar com geopandas/rasterio
-- Validar e escrever em silver/gold
-- Carregar geometrias para PostGIS
-
-### 3. Testar Pipeline Localmente
-
-```bash
-cd pipeline
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-
-# Teste antes de confiar em cron na VM
-python main.py
-```
-
-### 4. Deploy Atualizado na VM
-
-Atualize o código na VM sem re-rodar Ansible:
-
-```bash
-# SSH para VM de processamento
-ssh -i ~/.ssh/id_rsa ec2-user@$processingIP
-
-# Atualize código
-cd ~/esteira-geo
-git pull origin main  # ou copie arquivos manualmente
-```
-
-### 5. Monitoramento e Logs
-
-**VM de Processamento**:
-```bash
-# Ver logs do pipeline
-tail -f ~/esteira-geo/logs/pipeline.log
-
-# Verificar execução do cron
-sudo tail -f /var/log/cron
-```
-
-**VM de Apresentação**:
-```bash
-# Ver logs Flask/Gunicorn
-sudo journalctl -u esteira-geo -f
-# ou via Supervisor:
-sudo supervisorctl tail esteira_geo_flask stderr
-```
-
-### 6. Configurar Banco de Dados
-
-Criar tabelas de geometrias no PostGIS (após conexão funcionar):
-
-```bash
-psql -h $rdsEndpoint -U postgres -d esteira-geo-huawei-sp
-
--- Dentro do psql:
-CREATE TABLE geometries (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255),
-    geometry GEOMETRY(MULTIPOLYGON, 4326),
-    properties JSONB
-);
-
-CREATE INDEX idx_geometries_geom ON geometries USING GIST(geometry);
-\q
-```
-
-### 7. Integração Contínua
-
-- Configure GitHub Actions / GitLab CI para atualizar playbooks
-- Implemente testes de infraestrutura (terratest, kitchen)
-- Versione dados com DVC ou Delta Lake
-
----
-
-## 📝 Documentação Adicional
-
-- [Terraform Setup](./docs/terraform.md)
-- [Huawei Cloud Setup](./docs/huawei-setup.md)
-- [Ansible Automation](./ansible/README.md)
-- [Docker Environment](./pipeline/DOCKER.md)
-- [CSV/GeoJSON Guide](./pipeline/CSV_GEOJSON_GUIDE.md)
-- [Testes e Validações](./pipeline/TESTES_CSV_GEOJSON.md)
-- [Notebook Interativo](./notebooks/esteira_geo.ipynb)
 
 ---
 
 ## 🔧 Troubleshooting
 
-**Erro: `Provider not found`**
+**Airflow não inicia**
 ```bash
-terraform init -upgrade
+docker compose logs airflow-init
+docker compose logs airflow-scheduler
 ```
 
-**Erro: `Authentication failed`**
-- Verifique credenciais exportadas: `echo $env:AWS_ACCESS_KEY_ID`
-- Confirme permissões na conta da nuvem
+**DAG não detecta arquivos no bronze**
+- Verifique se o arquivo está em `automatizado/<use_case>/` (não em `processados/`)
+- O watcher roda a cada 30s — aguarde até 1 minuto
+- Verifique se a DAG `esteira_geo_watcher` está ativa na UI (http://localhost:8080)
 
-**RDS não acessível**
-- Verifique security group permite porta 5432
-- Confirme IP da VM está autorizado
+**Arquivo foi para `processados/` mas não apareceu no frontend**
+- O silver pode ter falhado antes de salvar — use `mover_processados()` no notebook utilitários para reprocessar
 
-**PostGIS não atualiza após pipeline rodar (Docker)**
-- Verifique se `pipeline-watcher` tem `RDS_HOST: postgis` no `docker-compose.yml`
-- Sem essa variável o loader tenta `localhost` e falha silenciosamente
+**Mapa não aparece / erro no browser**
+- Verifique se há dados no PostGIS: `curl http://localhost:5000/api/use_cases`
+- Se o use_case padrão não existir, o Flask usa automaticamente o primeiro disponível
 
-**Watcher não detecta arquivo já existente**
-```bash
-touch data/bronze/automatizado/enchentes_poa/meu_arquivo.csv
-```
+**Pipeline falha com erro de schema**
+- O `_safe_concat` do silver tolera schemas diferentes — verifique os logs do Airflow na UI
 
-**Arquivo fora de `automatizado/` não é processado**
-- O watcher ignora qualquer key que não comece com `automatizado/<use_case>/`
-- Mova o arquivo para o caminho correto: `bronze/automatizado/<use_case>/arquivo.csv`
+**Histórico do Airflow muito grande**
+- A DAG `esteira_geo_manutencao` limpa automaticamente runs com mais de 30 dias
+- Para limpeza manual: use o notebook `utilitarios.ipynb`
 
-**Jupyter — módulos da esteira não encontrados**
-- Confirme que o container foi buildado após alterações: `docker compose build jupyter`
-- O `sys.path` do notebook aponta para `/app` onde os módulos são copiados no build
+**PostGIS não atualiza após pipeline rodar**
+- Verifique se `RDS_HOST: postgis` está configurado no scheduler do Airflow no `docker-compose.yml`
 
-**Jupyter — alterações no código do pipeline não refletem no notebook**
-```bash
-# Rebuild necessário para copiar código atualizado para o container
-docker compose build jupyter && docker compose up -d jupyter
-```
+**Jupyter — alterações no código do pipeline não refletem**
+- O Jupyter usa volume bind `./pipeline:/app/pipeline_src` — alterações são imediatas, sem rebuild
+
+**Prometheus target DOWN**
+- Verifique em http://localhost:9090/targets qual target está com problema
+- MinIO: precisa de `MINIO_PROMETHEUS_AUTH_TYPE: public` no docker-compose
+- PostGIS: o `postgres-exporter` precisa do PostGIS healthy
+- Airflow: o scheduler envia métricas via StatsD para `statsd-exporter:9125`
+
+**Grafana sem dados**
+- O datasource Prometheus é provisionado automaticamente — verifique em http://localhost:3000/connections/datasources
+- Confirme que o Prometheus está coletando: http://localhost:9090/targets (todos UP)
 
 ---
 
-## 📞 Suporte
+## 📝 Documentação Adicional
 
-Para dúvidas ou adaptações:
-- Leia documentação em `docs/`
-- Consulte outputs Terraform: `terraform output`
-- Valide estado: `terraform show`
+- [Airflow DAGs](./airflow/dags/)
+- [Terraform Setup](./docs/terraform.md)
+- [Huawei Cloud Setup](./docs/huawei-setup.md)
+- [Ansible Automation](./ansible/README.md)
+- [Docker Environment](./pipeline/DOCKER.md)
+- [Pipeline README](./pipeline/README.md)
+- [CSV/GeoJSON Guide](./pipeline/CSV_GEOJSON_GUIDE.md)
+- [Diagramas de Arquitetura](./DIAGRAMAS.md)
+- [Notebook Interativo](./notebooks/esteira_geo.ipynb)
+- [Notebook Utilitários](./notebooks/utilitarios.ipynb)

@@ -76,7 +76,10 @@ def main():
             logger.info("=" * 70)
 
         elif has_areas_silver and not has_citizens_silver:
-            logger.info("\n[2] GOLD - Pulado (sem cidadãos no silver)")
+            logger.info("\n[2] GOLD - Salvando apenas áreas...")
+            from etl.gold_processor import process_gold_areas_only
+            process_gold_areas_only()
+
             logger.info("\n[3] POSTGIS - Sincronizando apenas áreas...")
             load_to_postgis(sync_areas=True, sync_citizens=False)
 

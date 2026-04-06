@@ -1,344 +1,247 @@
 # 🐳 Docker Setup - Quick Start
 
-Ambiente completo dockerizado para **desenvolvimento e teste local** da esteira geoespacial.
+Ambiente completo dockerizado para **desenvolvimento e teste local** da esteira geoespacial com **Apache Airflow**.
 
-## ⚡ Início Rápido (2 minutos)
+## ⚡ Início Rápido
 
 ### 1️⃣ Iniciar o Ambiente
 
 ```bash
-# Clone ou navegue para o projeto
 cd esteira-geo
+docker compose up -d
 
-# Inicie todos os serviços
-docker-compose up -d
-
-# Aguarde inicialização (~30 segundos)
-docker-compose ps
+# Aguarde ~60 segundos (Airflow init + health checks)
+docker compose ps
 ```
 
-**Status esperado**:
+**Status esperado:**
 ```
-NAME              STATUS              PORTS
-esteira-postgis   Up (healthy)        5432
-esteira-minio     Up (healthy)        9000, 9001
-esteira-pipeline  Up                  -
-esteira-web       Up                  5000
+NAME                        STATUS
+esteira-postgis             Up (healthy)
+esteira-minio               Up (healthy)
+esteira-airflow-webserver   Up (healthy)
+esteira-airflow-scheduler   Up
+esteira-pipeline            Up
+esteira-web                 Up
+esteira-jupyter             Up
 ```
 
 ### 2️⃣ Acessar Serviços
 
 | Serviço | URL | Credenciais |
 |---------|-----|-------------|
-| **Flask Dashboard** | http://localhost:5000 | - |
+| **Airflow UI** | http://localhost:8080 | admin / admin |
+| **Flask Dashboard** | http://localhost:5000 | — |
+| **JupyterLab** | http://localhost:8888/lab?token=esteira | — |
 | **MinIO Console** | http://localhost:9001 | minioadmin / minioadmin123 |
 | **PostgreSQL** | localhost:5432 | esteira_user / esteira_local_2025 |
 
-### 3️⃣ Executar Pipeline ETL
+### 3️⃣ Ingerir Dados e Executar Pipeline
 
 ```bash
-# Opção 1: Usar script helper (Windows)
-.\docker.ps1 pipeline
+# Opção A: Upload via bronze_loader (dados sintéticos)
+docker compose exec pipeline python /app/etl/bronze_loader.py
+# → O watcher detecta em até 30s e dispara automaticamente
 
-# Opção 2: Docker direto
-docker-compose exec pipeline python /app/pipeline/main.py
+# Opção B: Trigger manual via Airflow CLI
+docker compose exec airflow-scheduler \
+  airflow dags trigger esteira_geo --conf '{"use_case": "enchentes_poa"}'
 
-# Resultado esperado:
-# ✓ PIPELINE CONCLUÍDO COM SUCESSO!
-#   Cidadãos Atingidos: 60
-#   Cidadãos Não Atingidos: 40
-#   Total Avaliado: 100
+# Opção C: Pipeline direto sem Airflow
+docker compose exec -e USE_CASE=enchentes_poa pipeline python /app/main.py
 ```
 
-## 🛠️ Windows PowerShell Helper
+---
 
-Script convienente para gerenciar Docker:
+## 🔄 Fluxo do Pipeline
 
-```bash
-# Ver status
-.\docker.ps1 status
-
-# Executar pipeline
-.\docker.ps1 pipeline
-
-# Acessar shell (para debugging)
-.\docker.ps1 shell
-
-# Ver logs em tempo real
-.\docker.ps1 logs pipeline
-.\docker.ps1 logs postgis
-.\docker.ps1 logs web
-
-# Acessar banco de dados (psql interativo)
-.\docker.ps1 db
-
-# Abrir MinIO UI
-.\docker.ps1 minio
-
-# Executar testes
-.\docker.ps1 test
-
-# Parar ambiente
-.\docker.ps1 down
-
-# Limpar tudo (remover volumes)
-.\docker.ps1 clean
+```
+bronze/automatizado/<use_case>/
+         ↓ (detectado pelo esteira_geo_watcher a cada 30s)
+DAG: esteira_geo
+  ├── Task: silver       → normaliza CSV/GeoJSON, acumula por citizen_id/area_id
+  ├── Task: branch_gold  → decide próximo passo baseado no silver acumulado
+  ├── Task: gold         → spatial join (áreas + cidadãos)  ─┐
+  ├── Task: postgis      → TRUNCATE + INSERT no PostGIS      ─┘ caminho completo
+  ├── Task: postgis_areas_only → só áreas (sem cidadãos)    ─── só áreas
+  └── Task: skip_gold    → encerra (bronze vazio)            ─── sem dados
+         ↓
+Flask Dashboard (http://localhost:5000)
 ```
 
-## 🐧 Linux/macOS Shell Helper
+### Cenários suportados
 
-Para desenvolvimento em Linux ou macOS, use scripts bash:
+| Bronze contém | Branch | PostGIS atualizado com |
+|---|---|---|
+| Áreas + cidadãos | `gold` → `postgis` | Polígonos + cidadãos classificados |
+| Só áreas | `postgis_areas_only` | Polígonos visíveis no mapa |
+| Só cidadãos | `skip_gold` | Nada (aguarda áreas) |
+| Vazio | encerra | Nada |
+
+---
+
+## 🗂️ DAGs Airflow
+
+| DAG | Schedule | Função |
+|-----|----------|--------|
+| `esteira_geo_watcher` | 30s | Monitora `bronze/automatizado/`, dispara `esteira_geo` por use_case detectado |
+| `esteira_geo` | trigger | Executa silver → branch → gold/postgis |
+| `esteira_geo_manutencao` | diário | Limpa histórico do banco (mantém 30 dias) |
+
+---
+
+## 🛠️ Scripts de Gerenciamento
+
+### Linux/macOS
 
 ```bash
-# Fazer scripts executáveis
-chmod +x docker.sh debug.sh setup.sh
-
-# Ver status
-./docker.sh status
-
-# Executar pipeline
-./docker.sh pipeline
-
-# Acessar shell
-./docker.sh shell
-
-# Ver logs
+chmod +x setup.sh docker.sh debug.sh
+./setup.sh        # Setup inicial (primeira vez)
+./docker.sh up    # Iniciar ambiente
+./docker.sh down  # Parar ambiente
 ./docker.sh logs pipeline
-./docker.sh logs postgis
-
-# Banco de dados
-./docker.sh db
-
-# Abrir MinIO
-./docker.sh minio
-
-# Testes
-./debug.sh test-all
-./debug.sh validate
-
-# Parar
-./docker.sh down
+./docker.sh db    # Acessar PostgreSQL
 ```
 
-**OU use Makefile (mais padrão)**:
+### Windows PowerShell
+
+```powershell
+.\docker.ps1 status
+.\docker.ps1 pipeline
+.\docker.ps1 logs pipeline
+.\docker.ps1 db
+.\docker.ps1 down
+```
+
+### Makefile
 
 ```bash
-# Status
-make status
-
-# Pipeline
-make pipeline
-
-# Testes
-make test
-
-# Logs
-make logs-pipeline
-
-# Banco
-make db
-
-# Parar
-make down
+make up       # Iniciar
+make pipeline # Executar pipeline
+make down     # Parar
+make db       # Banco de dados
 ```
 
-Veja [SCRIPTS_BASH.md](./SCRIPTS_BASH.md) para documentação completa dos scripts bash
+---
 
 ## 📊 Verificar Dados
 
-### Em MinIO (S3 simulado)
+### Airflow UI
+
+Acesse http://localhost:8080 (admin/admin) para:
+- Ver histórico de runs e status de cada task
+- Disparar DAGs manualmente com `use_case` específico
+- Ver logs detalhados por task
+
+### PostgreSQL
 
 ```bash
-# Via UI: http://localhost:9001
-# Buckets disponíveis:
-# - bronze/    → dados brutos (GeoParquet)
-# - silver/    → dados normalizados
-# - gold/      → dados processados (spatial join result)
+docker compose exec postgis psql -U esteira_user -d esteira_geo
+
+-- Use_cases disponíveis
+SELECT tablename FROM pg_tables WHERE tablename LIKE '%_citizens';
+
+-- Estatísticas
+SELECT COUNT(*) as total,
+       SUM(CASE WHEN affected_by_flooding THEN 1 ELSE 0 END) as afetados
+FROM enchentes_poa_citizens;
+\q
 ```
 
-### Em PostgreSQL (PostGIS)
+### MinIO (S3 simulado)
+
+Acesse http://localhost:9001 — buckets disponíveis:
+- `bronze/automatizado/<use_case>/` — arquivos pendentes
+- `bronze/automatizado/<use_case>/processados/` — processados com sucesso
+- `silver/<use_case>/` — parquet normalizado
+- `gold/<use_case>/` — parquet do spatial join
+
+### Flask APIs
 
 ```bash
-# Via helper
-.\docker.ps1 db
-
-# Dentro do psql:
-esteira_geo=# SELECT COUNT(*) FROM citizens;
-esteira_geo=# SELECT COUNT(*) FROM citizens WHERE affected_by_flooding = TRUE;
-esteira_geo=# SELECT * FROM v_citizens_summary;
-\q  # Sair
+curl http://localhost:5000/health
+curl http://localhost:5000/api/use_cases
+curl "http://localhost:5000/api/stats?use_case=enchentes_poa"
 ```
 
-## 🧪 Testes Específicos por Camada
+---
+
+## 🧪 Executar Etapas Individuais
 
 ```bash
-# Bronze (geração de dados)
-docker-compose exec pipeline python -c "from pipeline.etl.bronze_loader import load_sample_data; load_sample_data()"
+# Silver
+docker compose exec pipeline python -c \
+  "from etl.silver_processor import process_silver; print(process_silver())"
 
-# Silver (normalização)
-docker-compose exec pipeline python -c "from pipeline.etl.silver_processor import process_silver; process_silver()"
+# Gold (completo)
+docker compose exec pipeline python -c \
+  "from etl.gold_processor import process_gold; process_gold()"
 
-# Gold (spatial join - a magia acontece aqui!)
-docker-compose exec pipeline python -c "from pipeline.etl.gold_processor import process_gold; process_gold()"
+# Gold (só áreas)
+docker compose exec pipeline python -c \
+  "from etl.gold_processor import process_gold_areas_only; process_gold_areas_only()"
 
-# PostGIS (carrega dados no banco)
-docker-compose exec pipeline python -c "from pipeline.etl.postgis_loader import load_to_postgis; load_to_postgis()"
+# PostGIS
+docker compose exec pipeline python -c \
+  "from etl.postgis_loader import load_to_postgis; load_to_postgis()"
 ```
 
-## 📁 Estrutura de Volumes
+---
 
-Dados persistem em volumes Docker:
+## 🔧 Troubleshooting
+
+### Airflow não sobe
 
 ```bash
-# Acessar arquivos locais
-docker cp esteira-pipeline:/data/bronze/flooding_areas_porto_alegre.parquet .
-
-# Ou dentro do container
-docker-compose exec pipeline bash
-ls -la /data/bronze/
-ls -la /data/silver/
-ls -la /data/gold/
+docker compose logs airflow-init
+docker compose logs airflow-scheduler
 ```
 
-## 🔄 Pipeline Flow
+### DAG não detecta arquivos
 
-```
-┌─────────────────┐
-│ Bronze Layer    │  generating data/fetching from sources
-│ (raw data)      │  3 flooding areas + 100 citizens
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────┐
-│ Silver Layer        │  normalizing/validating
-│ (normalized data)   │  geometry validation, type standardization
-└────────┬────────────┘
-         │
-         ▼
-┌──────────────────────────┐
-│ Gold Layer               │  processing
-│ (processed + analyzed)   │  **Spatial Join**: citizen points within flood polygons
-└────────┬─────────────────┘
-         │
-         ▼
-┌──────────────────────────┐
-│ PostGIS                  │  persistence
-│ (RDS + spatial indexes)  │  INSERT with ST_GeomFromText
-└────────┬─────────────────┘
-         │
-         ▼
-┌──────────────────────────┐
-│ Flask Dashboard          │  visualization
-│ (API + web UI)           │  querying PostGIS + rendering results
-└──────────────────────────┘
+- Verifique se o arquivo está em `automatizado/<use_case>/` (não em `processados/`)
+- Aguarde até 30s (intervalo do watcher)
+- Confirme que `esteira_geo_watcher` está ativa na UI
 
-Output:
-  ✓ affected_citizens.parquet (60)
-  ✓ unaffected_citizens.parquet (40)  
-  ✓ all_citizens_evaluated.parquet (100)
-  ✓ PostgreSQL tables with spatial indexes
-```
+### Arquivo foi para `processados/` mas não apareceu no frontend
 
-## 🐛 Troubleshooting
+Use o notebook `utilitarios.ipynb` → `mover_processados()` para reprocessar.
 
-### PostgreSQL não conecta
+### Rebuild após mudanças no código
 
 ```bash
-# Verificar saúde
-docker-compose exec postgis pg_isready -U esteira_user
-
-# Ver logs
-docker-compose logs postgis
-
-# Forçar recriação
-docker-compose down postgis
-docker-compose up -d postgis
+# Pipeline e web usam volumes bind — mudanças são imediatas
+# Airflow usa volumes bind para dags/ e pipeline/ — mudanças são imediatas
+# Para mudanças no Dockerfile:
+docker compose build airflow-scheduler airflow-webserver
+docker compose up -d airflow-scheduler airflow-webserver
 ```
 
-### MinIO não inicializa
+### Limpar tudo e recomeçar
 
 ```bash
-# Verificar buckets foram criados
-docker-compose logs minio-init
-
-# Tentar reconectar
-docker-compose down minio minio-init
-docker-compose up -d minio minio-init
+docker compose down -v   # remove volumes (apaga dados!)
+docker compose build --no-cache
+docker compose up -d
 ```
 
-### Pipeline container não executa
+### Ver logs
 
 ```bash
-# Acessar shell
-.\docker.ps1 shell
-cd /app
-python pipeline/main.py  # Rodar manualmente
-
-# Ver erros detalhados
-docker-compose logs pipeline
+docker compose logs -f airflow-scheduler
+docker compose logs -f pipeline
+docker compose logs -f web
 ```
 
-### Limpar e recomeçar
+---
 
-```bash
-# Parar tudo
-docker-compose down
+## 📦 Imagens Docker
 
-# Remover volumes (cuidado: deleta dados!)
-docker-compose down -v
-
-# Reconstruir imagens
-docker-compose build --no-cache
-
-# Reiniciar
-docker-compose up -d
-```
-
-## 📦 Serviços & Imagens
-
-| Serviço | Imagem | Descrição |
-|---------|--------|-----------|
-| **postgis** | postgis:13-3.2 | PostgreSQL com extensão PostGIS |
-| **minio** | minio/minio:latest | S3-compatible object storage |
-| **minio-init** | minio/mc:latest | Cliente para criar buckets |
-| **pipeline** | Custom (Dockerfile) | ETL Python com gdal/geopandas |
-| **web** | Custom (Dockerfile.web) | Flask app com Gunicorn |
-
-## 🔐 Credenciais Padrão
-
-```
-PostgreSQL:
-  Host: postgis (ou localhost:5432)
-  User: esteira_user
-  Pass: esteira_local_2025
-  Database: esteira_geo
-
-MinIO:
-  Endpoint: http://minio:9000 (ou localhost:9001 para UI)
-  Access Key: minioadmin
-  Secret Key: minioadmin123
-```
-
-## 📚 Arquivos Importantes
-
-- `docker-compose.yml` - Orquestração de containers
-- `pipeline/Dockerfile` - Imagem do pipeline ETL
-- `pipeline/Dockerfile.web` - Imagem da Flask app
-- `.env.docker` - Variáveis de ambiente
-- `pipeline/DOCKER.md` - Documentação completa
-- `docker.ps1` - Helper script para Windows
-
-## 🚀 Próximos Passos
-
-1. ✅ Ambiente Docker rodando
-2. ✅ Pipeline ETL funcionando
-3. ▶️ **Modificar dados de entrada** (customize bronze_loader.py)
-4. ▶️ **Integrar suas queries PostGIS** (customize postgis_loader.py)
-5. ▶️ **Adicionar endpoints Flask** (customize app.py)
-6. ▶️ **Deploy em cloud** (usar Terraform + Ansible)
-
-## 📖 Documentação Completa
-
-- [pipeline/DOCKER.md](./pipeline/DOCKER.md) - Guia detalhado
-- [pipeline/README.md](./pipeline/README.md) - Documentação do pipeline
-- [README.md](./README.md) - Documentação principal do projeto
+| Serviço | Base | Extras |
+|---------|------|--------|
+| `airflow-scheduler/webserver` | `apache/airflow:2.9.1-python3.12` | GDAL, geopandas, boto3, psycopg2 |
+| `pipeline` | `python:3.12-slim` | GDAL, geopandas, rasterio, boto3 |
+| `web` | `python:3.12-slim` | Flask, psycopg2, GDAL |
+| `jupyter` | `python:3.9-slim` | JupyterLab, geopandas, boto3 |
+| `postgis` | `postgis/postgis:13-3.2` | PostGIS extension |
+| `minio` | `minio/minio:latest` | S3-compatible storage |

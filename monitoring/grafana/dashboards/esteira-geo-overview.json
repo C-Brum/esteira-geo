@@ -1,0 +1,156 @@
+{
+  "uid": "esteira-geo-overview",
+  "title": "Esteira Geo — Overview",
+  "tags": ["esteira-geo"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "title": "Serviços", "type": "stat",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "pg_up", "legendFormat": "PostGIS", "refId": "A" },
+        { "expr": "minio_cluster_health_status", "legendFormat": "MinIO", "refId": "B" },
+        { "expr": "up{job=\"airflow\"}", "legendFormat": "Airflow StatsD", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "thresholds": { "steps": [{ "value": null, "color": "red" }, { "value": 1, "color": "green" }] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 10, "title": "── PostGIS ──", "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 4 },
+      "options": { "mode": "markdown", "content": "### PostGIS" }
+    },
+    {
+      "id": 2, "title": "Conexões Ativas", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 6 },
+      "targets": [{ "expr": "pg_stat_database_numbackends{datname=\"esteira_geo\"}", "legendFormat": "conexões", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 3, "title": "Tamanho do Banco", "type": "stat",
+      "gridPos": { "h": 7, "w": 4, "x": 8, "y": 6 },
+      "targets": [{ "expr": "pg_database_size_bytes{datname=\"esteira_geo\"}", "legendFormat": "tamanho", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 4, "title": "Tuplas Inseridas / Atualizadas / Deletadas", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "rate(pg_stat_database_tup_inserted{datname=\"esteira_geo\"}[5m])", "legendFormat": "inserts/s", "refId": "A" },
+        { "expr": "rate(pg_stat_database_tup_updated{datname=\"esteira_geo\"}[5m])", "legendFormat": "updates/s", "refId": "B" },
+        { "expr": "rate(pg_stat_database_tup_deleted{datname=\"esteira_geo\"}[5m])", "legendFormat": "deletes/s", "refId": "C" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 5, "title": "Linhas por Tabela (use_cases)", "type": "table",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "targets": [{ "expr": "pg_stat_user_tables_n_live_tup{relname=~\".*_citizens|.*_areas\"}", "legendFormat": "{{relname}}", "refId": "A", "format": "table", "instant": true }],
+      "transformations": [{ "id": "organize", "options": { "excludeByName": { "Time": true, "job": true, "instance": true, "__name__": true, "server": true, "schemaname": true }, "renameByName": { "relname": "Tabela", "Value": "Linhas" } } }],
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 6, "title": "Locks", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "targets": [{ "expr": "pg_locks_count{datname=\"esteira_geo\"}", "legendFormat": "{{mode}}", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 20, "title": "── MinIO ──", "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 20 },
+      "options": { "mode": "markdown", "content": "### MinIO" }
+    },
+    {
+      "id": 7, "title": "Storage Usado", "type": "gauge",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 22 },
+      "targets": [{ "expr": "minio_cluster_usage_total_bytes", "legendFormat": "usado", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "thresholds": { "steps": [{ "value": null, "color": "green" }, { "value": 7516192768, "color": "yellow" }, { "value": 9663676416, "color": "red" }] } } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 8, "title": "Objetos Totais", "type": "stat",
+      "gridPos": { "h": 7, "w": 4, "x": 8, "y": 22 },
+      "targets": [{ "expr": "minio_cluster_usage_object_total", "legendFormat": "objetos", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 9, "title": "S3 Requests/s", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 22 },
+      "targets": [{ "expr": "rate(minio_s3_requests_total[5m])", "legendFormat": "{{api}}", "refId": "A" }],
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 11, "title": "Tráfego S3", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 29 },
+      "targets": [
+        { "expr": "rate(minio_s3_traffic_received_bytes[5m])", "legendFormat": "recebido", "refId": "A" },
+        { "expr": "rate(minio_s3_traffic_sent_bytes[5m])", "legendFormat": "enviado", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 12, "title": "MinIO CPU / Memória", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 29 },
+      "targets": [
+        { "expr": "rate(minio_node_process_cpu_total_seconds[5m]) * 100", "legendFormat": "CPU %", "refId": "A" },
+        { "expr": "minio_node_process_resident_memory_bytes", "legendFormat": "RSS", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "RSS" }, "properties": [{ "id": "unit", "value": "bytes" }, { "id": "custom.axisPlacement", "value": "right" }] },
+          { "matcher": { "id": "byName", "options": "CPU %" }, "properties": [{ "id": "unit", "value": "percent" }] }
+        ]
+      },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 30, "title": "── Airflow ──", "type": "text",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 36 },
+      "options": { "mode": "markdown", "content": "### Airflow" }
+    },
+    {
+      "id": 13, "title": "Executor — Slots / Running / Queued", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 38 },
+      "targets": [
+        { "expr": "airflow_executor_open_slots", "legendFormat": "open_slots", "refId": "A" },
+        { "expr": "airflow_executor_running_tasks", "legendFormat": "running", "refId": "B" },
+        { "expr": "airflow_executor_queued_tasks", "legendFormat": "queued", "refId": "C" }
+      ],
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 14, "title": "DAG Run Duration (success)", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 38 },
+      "targets": [{ "expr": "airflow_dagrun_duration_success", "legendFormat": "{{dag_id}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 15, "title": "Task Duration por DAG", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 45 },
+      "targets": [{ "expr": "airflow_dag_task_duration", "legendFormat": "{{dag_id}}.{{task_id}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    },
+    {
+      "id": 16, "title": "DAG Parse Time", "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 45 },
+      "targets": [{ "expr": "airflow_dag_processing_total_parse_time", "legendFormat": "parse_time", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

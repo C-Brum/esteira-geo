@@ -51,12 +51,19 @@ def list_use_cases(conn):
 
 @app.route('/')
 def index():
-    use_case = request.args.get('use_case', DEFAULT_USE_CASE)
     conn = get_db_connection()
     if not conn:
         return render_template('index.html', error="Banco offline"), 500
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        use_cases = list_use_cases(conn)
+        # Usar use_case da query string, ou o default, ou o primeiro disponível
+        requested = request.args.get('use_case', DEFAULT_USE_CASE)
+        use_case = requested if requested in use_cases else (use_cases[0] if use_cases else None)
+        if not use_case:
+            conn.close()
+            return render_template('index.html', error="Nenhum dado disponível no banco.",
+                                   use_cases=[], use_case=None), 200
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(f"""
             SELECT
                 COUNT(*) as total,
@@ -65,7 +72,6 @@ def index():
             FROM {tbl(use_case, 'citizens')}
         """)
         stats = cursor.fetchone()
-        use_cases = list_use_cases(conn)
         cursor.close()
         conn.close()
         return render_template('index.html',
@@ -74,9 +80,8 @@ def index():
                                use_cases=use_cases,
                                last_update=datetime.now().isoformat())
     except Exception as e:
-        cursor.close()
         conn.close()
-        return render_template('index.html', error=str(e), use_case=use_case), 500
+        return render_template('index.html', error=str(e), use_case=None), 500
 
 
 @app.route('/map')
@@ -87,12 +92,17 @@ def map_view():
 
 @app.route('/api/geojson')
 def api_geojson():
-    use_case = request.args.get('use_case', DEFAULT_USE_CASE)
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database offline'}), 500
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        use_cases = list_use_cases(conn)
+        requested = request.args.get('use_case', DEFAULT_USE_CASE)
+        use_case = requested if requested in use_cases else (use_cases[0] if use_cases else None)
+        if not use_case:
+            conn.close()
+            return jsonify({'type': 'FeatureCollection', 'features': []})
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         features = []
         cursor.execute(f"""
             SELECT citizen_id, name, address, phone,
@@ -139,12 +149,18 @@ def api_geojson():
 
 @app.route('/api/stats')
 def api_stats():
-    use_case = request.args.get('use_case', DEFAULT_USE_CASE)
     conn = get_db_connection()
     if not conn:
         return jsonify({'error': 'Database offline'}), 500
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        use_cases = list_use_cases(conn)
+        requested = request.args.get('use_case', DEFAULT_USE_CASE)
+        use_case = requested if requested in use_cases else (use_cases[0] if use_cases else None)
+        if not use_case:
+            conn.close()
+            return jsonify({'total_citizens': 0, 'affected': 0, 'unaffected': 0,
+                            'affected_pct': 0, 'use_case': None})
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(f"""
             SELECT
                 COUNT(*) as total_citizens,
