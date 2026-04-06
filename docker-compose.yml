@@ -27,6 +27,7 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -179,6 +180,67 @@ services:
       - watcher   # só sobe com: docker compose --profile watcher up
     command: ["python", "/app/watchers/watch_bronze.py"]
 
+  # ── Monitoring ─────────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: esteira-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - esteira-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: esteira-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/esteira-geo-overview.json
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - esteira-network
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: esteira-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://esteira_user:esteira_local_2025@postgis:5432/esteira_geo?sslmode=disable"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    networks:
+      - esteira-network
+    restart: unless-stopped
+
+  statsd-exporter:
+    image: prom/statsd-exporter:latest
+    container_name: esteira-statsd-exporter
+    ports:
+      - "9102:9102"
+      - "9125:9125/udp"
+    volumes:
+      - ./monitoring/statsd/mapping.yml:/tmp/mapping.yml:ro
+    command:
+      - "--statsd.mapping-config=/tmp/mapping.yml"
+    networks:
+      - esteira-network
+    restart: unless-stopped
+
   # ── Airflow ────────────────────────────────────────────────────────────────
 
   # Inicializa DB do Airflow e cria usuário admin (roda uma vez e sai)
@@ -221,6 +283,11 @@ services:
       AIRFLOW__SCHEDULER__MAX_DAGRUNS_TO_CREATE_PER_LOOP: "10"
       AIRFLOW__SCHEDULER__CLEAN_TIS_WITHOUT_DAGRUN: "true"
       AIRFLOW__DB__MAX_DB_RETRIES: "3"
+      # StatsD → statsd-exporter → Prometheus
+      AIRFLOW__METRICS__STATSD_ON: "true"
+      AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+      AIRFLOW__METRICS__STATSD_PORT: "9125"
+      AIRFLOW__METRICS__STATSD_PREFIX: airflow
       AIRFLOW_CONN_S3_ESTEIRA: '{"conn_type": "aws", "login": "minioadmin", "password": "minioadmin123", "extra": {"endpoint_url": "http://minio:9000", "region_name": "us-east-1"}}'
       AWS_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: minioadmin
@@ -286,6 +353,10 @@ volumes:
   pipeline_silver:
     driver: local
   pipeline_gold:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

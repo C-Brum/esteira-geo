@@ -33,3 +33,4 @@ pipeline/data/
 
 # Ansible
 *.retry
+.ipynb_checkpoints/

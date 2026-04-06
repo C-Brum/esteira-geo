@@ -47,6 +47,13 @@ esteira-geo/
 │           ├── enchentes_poa/
 │           ├── enchentes_mg/
 │           └── enchentes_rj/
+├── monitoring/            # Prometheus + Grafana
+│   ├── prometheus/
+│   │   └── prometheus.yml # Scrape config (MinIO, PostGIS, Airflow)
+│   ├── grafana/
+│   │   └── provisioning/  # Datasource auto-provisionado
+│   └── statsd/
+│       └── mapping.yml    # Mapeamento StatsD → Prometheus (Airflow)
 ├── diagrams/              # Diagramas Mermaid da arquitetura
 ├── docs/                  # Documentação técnica
 └── README.md
@@ -89,6 +96,8 @@ docker compose ps
 # Dashboard Flask:  http://localhost:5000
 # JupyterLab:       http://localhost:8888/lab?token=esteira
 # MinIO Console:    http://localhost:9001  (minioadmin/minioadmin123)
+# Grafana:          http://localhost:3000  (admin/admin)
+# Prometheus:       http://localhost:9090
 # PostgreSQL:       localhost:5432         (esteira_user/esteira_local_2025)
 ```
 
@@ -103,6 +112,10 @@ docker compose ps
 | `esteira-pipeline` | — | Container ETL (idle, testes manuais) |
 | `esteira-web` | 5000 | Flask dashboard |
 | `esteira-jupyter` | 8888 | JupyterLab |
+| `esteira-prometheus` | 9090 | Prometheus (métricas) |
+| `esteira-grafana` | 3000 | Grafana (dashboards) |
+| `esteira-postgres-exporter` | — | Exporter PostGIS → Prometheus |
+| `esteira-statsd-exporter` | 9102 | Exporter Airflow StatsD → Prometheus |
 
 ### DAGs Airflow
 
@@ -322,6 +335,16 @@ docker compose logs airflow-scheduler
 
 **Jupyter — alterações no código do pipeline não refletem**
 - O Jupyter usa volume bind `./pipeline:/app/pipeline_src` — alterações são imediatas, sem rebuild
+
+**Prometheus target DOWN**
+- Verifique em http://localhost:9090/targets qual target está com problema
+- MinIO: precisa de `MINIO_PROMETHEUS_AUTH_TYPE: public` no docker-compose
+- PostGIS: o `postgres-exporter` precisa do PostGIS healthy
+- Airflow: o scheduler envia métricas via StatsD para `statsd-exporter:9125`
+
+**Grafana sem dados**
+- O datasource Prometheus é provisionado automaticamente — verifique em http://localhost:3000/connections/datasources
+- Confirme que o Prometheus está coletando: http://localhost:9090/targets (todos UP)
 
 ---
 
