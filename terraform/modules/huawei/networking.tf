@@ -31,6 +31,18 @@ resource "huaweicloud_networking_secgroup_rule" "processing_ssh" {
   port_range_min    = 22
   port_range_max    = 22
   remote_ip_prefix  = "0.0.0.0/0"
+  description       = "SSH"
+}
+
+resource "huaweicloud_networking_secgroup_rule" "processing_airflow" {
+  security_group_id = huaweicloud_networking_secgroup.processing_sg.id
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  protocol          = "tcp"
+  port_range_min    = 8080
+  port_range_max    = 8080
+  remote_ip_prefix  = "0.0.0.0/0"
+  description       = "Airflow Webserver UI"
 }
 
 resource "huaweicloud_networking_secgroup_rule" "processing_egress" {

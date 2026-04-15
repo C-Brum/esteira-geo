@@ -1,15 +1,16 @@
 #!/bin/bash
 set -e
 
-# Script to run the processing pipeline
-# Sourced by cron job
+# Trigger manual de um use_case via Airflow CLI
+# Uso: ./run_pipeline.sh enchentes_poa
 
-cd /home/esteira/esteira-geo
+USE_CASE=${1:-enchentes_poa}
+APP_DIR=/home/esteira/esteira-geo
+
+cd "$APP_DIR"
 source venv/bin/activate
+set -a && source .env && set +a
 
-export $(cat .env | grep -v '^#')
+airflow dags trigger esteira_geo --conf "{\"use_case\": \"$USE_CASE\"}"
 
-# Run the main processing script
-python3 main.py >> logs/pipeline.log 2>&1
-
-echo "Pipeline execution completed at $(date)" >> logs/pipeline.log
+echo "DAG esteira_geo triggered for use_case=$USE_CASE at $(date)"

@@ -9,6 +9,8 @@
         that:
           - rds_host is defined
           - rds_port is defined
+          - aws_s3_bronze_bucket is defined
+          - aws_s3_silver_bucket is defined
           - aws_s3_gold_bucket is defined
         fail_msg: "Required inventory variables not set"
 

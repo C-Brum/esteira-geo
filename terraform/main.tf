@@ -2,10 +2,6 @@
  Root module that selects cloud-specific modules based on `var.cloud`.
  Uses count to conditionally instantiate modules for a chosen cloud.
 */
-
-variable "project" {}
-variable "region" {}
-
 module "aws" {
   source  = "./modules/aws"
   count   = var.cloud == "aws" ? 1 : 0

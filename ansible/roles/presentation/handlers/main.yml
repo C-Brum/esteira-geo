@@ -1,6 +1,4 @@
 ---
-# Handlers for presentation role
-
 - name: restart nginx
   service:
     name: nginx
@@ -8,5 +6,5 @@
 
 - name: restart supervisor
   service:
-    name: supervisord
+    name: supervisor   # Ubuntu usa 'supervisor', não 'supervisord'
     state: restarted

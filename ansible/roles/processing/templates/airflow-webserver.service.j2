@@ -1,0 +1,19 @@
+[Unit]
+Description=Airflow Webserver — Esteira Geo
+After=network.target airflow-scheduler.service
+Wants=network-online.target
+
+[Service]
+User={{ processing_user }}
+Group={{ processing_user }}
+WorkingDirectory={{ processing_app_dir }}
+EnvironmentFile={{ processing_app_dir }}/.env
+ExecStart={{ processing_app_dir }}/venv/bin/airflow webserver --port 8080
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=airflow-webserver
+
+[Install]
+WantedBy=multi-user.target

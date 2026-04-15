@@ -1,8 +1,8 @@
 ---
-- name: Configure Processing VM
+- name: Configure Processing VM (Airflow + Pipeline ETL)
   hosts: processing
   become: yes
-  
+
   roles:
     - common
     - processing
@@ -11,20 +11,21 @@
     - name: Display processing VM configuration summary
       debug:
         msg: |
-          Processing VM configured successfully!
-          
-          User: {{ processing_user }}
-          Home: {{ processing_home }}
-          App Dir: {{ processing_app_dir }}
-          
-          Configured packages:
-          - Python geospatial libraries (geopandas, rasterio, fiona, etc.)
-          - Database client (psycopg2)
-          - Cloud storage (boto3)
-          
-          Pipeline scheduled to run at: {{ pipeline_schedule }}
-          
-          Next steps:
-          1. Copy your processing scripts to {{ processing_app_dir }}/
-          2. Test the pipeline manually before relying on cron
-          3. Configure AWS/S3 credentials on the VM
+          Processing VM configurada com sucesso!
+
+          Usuário : {{ processing_user }}
+          App Dir : {{ processing_app_dir }}
+          Airflow : {{ airflow_home }}
+
+          Serviços systemd:
+            airflow-scheduler  → executa DAGs (LocalExecutor)
+            airflow-webserver  → UI em http://<IP>:8080  ({{ airflow_admin_user }}/{{ airflow_admin_password }})
+
+          DAGs disponíveis:
+            esteira_geo_watcher     → monitora bronze/automatizado/ a cada 30s
+            esteira_geo             → silver → branch → gold → postgis
+            esteira_geo_manutencao  → limpeza diária do histórico (30 dias)
+
+          Próximos passos:
+            1. Verificar serviços: systemctl status airflow-scheduler airflow-webserver
+            2. Acessar UI: http://{{ ansible_host }}:8080

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa — {{ use_case }}</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        :root {
+            --surface: #ffffff;
+            --bg:      #f6f8fa;
+            --border:  #d0d7de;
+            --text:    #1f2328;
+            --muted:   #656d76;
+            --accent:  #0969da;
+            --red:     #cf222e;
+            --green:   #1a7f37;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+
+        /* ── HUD ── */
+        #hud {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 20px;
+            display: none;
+            align-items: center;
+            gap: 18px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            white-space: nowrap;
+        }
+        .hud-title {
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
+        }
+        .hud-divider { width: 1px; height: 20px; background: var(--border); }
+        .hud-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .hud-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .hud-stat .val {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        /* ── Loading ── */
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 2000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 24px 36px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        }
+        .spinner {
+            width: 26px; height: 26px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading p { font-size: 13px; color: var(--muted); }
+
+        /* ── Back ── */
+        #back {
+            position: absolute;
+            bottom: 24px;
+            left: 12px;
+            z-index: 1000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 14px;
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.12s;
+        }
+        #back:hover { color: var(--accent); border-color: var(--accent); }
+
+        /* ── Leaflet overrides ── */
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+            border: 1px solid var(--border) !important;
+        }
+        .leaflet-popup-content {
+            font-family: 'Inter', sans-serif !important;
+            font-size: 13px !important;
+            line-height: 1.6 !important;
+            color: var(--text) !important;
+        }
+        .leaflet-control-layers {
+            border-radius: 8px !important;
+            border: 1px solid var(--border) !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+        }
+        .leaflet-control-layers label {
+            font-family: 'Inter', sans-serif !important;
+            font-size: 13px !important;
+        }
+        .marker-cluster-small,
+        .marker-cluster-medium,
+        .marker-cluster-large {
+            background-color: rgba(9, 105, 218, 0.15) !important;
+        }
+        .marker-cluster-small div,
+        .marker-cluster-medium div,
+        .marker-cluster-large div {
+            background-color: rgba(9, 105, 218, 0.7) !important;
+            color: white !important;
+            font-family: 'JetBrains Mono', monospace !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+        }
+    </style>
+</head>
+<body>
+
+<div id="loading">
+    <div class="spinner"></div>
+    <p>Carregando dados geoespaciais...</p>
+</div>
+
+<div id="map"></div>
+
+<div id="hud">
+    <span class="hud-title">{{ use_case }}</span>
+    <div class="hud-divider"></div>
+    <div class="hud-stat">
+        <div class="hud-dot" style="background:#0969da"></div>
+        <span class="val" id="b-total">—</span> total
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-stat">
+        <div class="hud-dot" style="background:#cf222e"></div>
+        <span class="val" id="b-affected">—</span> afetados
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-stat">
+        <div class="hud-dot" style="background:#1a7f37"></div>
+        <span class="val" id="b-safe">—</span> seguros
+    </div>
+</div>
+
+<a href="/?use_case={{ use_case }}" id="back">← Dashboard</a>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+const USE_CASE = "{{ use_case }}";
+
+const map = L.map('map').setView([-15.78, -47.93], 4);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
+}).addTo(map);
+
+const floodLayer        = L.layerGroup().addTo(map);
+const affectedCluster   = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 }).addTo(map);
+const unaffectedCluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 }).addTo(map);
+
+L.control.layers({}, {
+    '🔴 Afetados':       affectedCluster,
+    '🟢 Não Afetados':   unaffectedCluster,
+    '🟠 Áreas de Risco': floodLayer,
+}, { collapsed: false }).addTo(map);
+
+fetch(`/api/geojson?use_case=${USE_CASE}`)
+    .then(r => r.json())
+    .then(data => {
+        let total = 0, affected = 0, safe = 0;
+        const bounds = [];
+        const areaBounds = [];
+
+        data.features.forEach(f => {
+            const p = f.properties;
+            const coords = f.geometry.coordinates;
+
+            if (p.type === 'citizen') {
+                total++;
+                const lat = coords[1], lon = coords[0];
+                bounds.push([lat, lon]);
+                const color = p.affected ? '#cf222e' : '#1a7f37';
+                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="24" viewBox="0 0 20 24">
+                    <circle cx="10" cy="5" r="4" fill="${color}"/>
+                    <path d="M2 20 Q2 12 10 12 Q18 12 18 20" fill="${color}"/>
+                    <line x1="10" y1="24" x2="10" y2="20" stroke="${color}" stroke-width="2"/>
+                </svg>`;
+                const icon = L.divIcon({
+                    html: svg,
+                    className: '',
+                    iconSize: [20, 24],
+                    iconAnchor: [10, 24],
+                    popupAnchor: [0, -24]
+                });
+                const statusLabel = p.affected
+                    ? `<span style="color:#cf222e;font-weight:600">● AFETADO</span>`
+                    : `<span style="color:#1a7f37;font-weight:600">● SEGURO</span>`;
+                const marker = L.marker([lat, lon], { icon }).bindPopup(
+                    `<b style="font-size:14px">${p.name || '—'}</b><br>
+                     <span style="color:#656d76;font-size:11px;font-family:monospace">ID: ${p.id}</span><br>
+                     ${p.address || ''}<br><br>${statusLabel}`
+                );
+                if (p.affected) { affected++; affectedCluster.addLayer(marker); }
+                else            { safe++;     unaffectedCluster.addLayer(marker); }
+
+            } else if (p.type === 'flood_area') {
+                const poly = L.geoJSON(f, {
+                    style: {
+                        color: '#bc4c00',
+                        weight: 2,
+                        fillColor: '#fb8f44',
+                        fillOpacity: 0.18
+                    }
+                }).bindPopup(
+                    `<b style="font-size:14px">${p.name}</b><br>
+                     <span style="color:#656d76;font-size:11px">Data: ${p.date || '—'}</span><br>
+                     Severidade: <b>${p.severity || '—'}</b>`
+                );
+                floodLayer.addLayer(poly);
+                const rings = f.geometry.type === 'Polygon'
+                    ? f.geometry.coordinates
+                    : f.geometry.coordinates.flat();
+                rings[0].forEach(c => areaBounds.push([c[1], c[0]]));
+            }
+        });
+
+        document.getElementById('b-total').textContent    = total;
+        document.getElementById('b-affected').textContent = affected;
+        document.getElementById('b-safe').textContent     = safe;
+        document.getElementById('hud').style.display      = 'flex';
+        document.getElementById('loading').style.display  = 'none';
+
+        if (bounds.length)          map.fitBounds(bounds,     { padding: [40, 40] });
+        else if (areaBounds.length) map.fitBounds(areaBounds, { padding: [60, 60] });
+        else                        map.setView([-15.78, -47.93], 4);
+    })
+    .catch(e => {
+        document.getElementById('loading').innerHTML =
+            `<p style="color:#cf222e;font-size:13px">❌ Erro: ${e.message}</p>`;
+    });
+</script>
+</body>
+</html>

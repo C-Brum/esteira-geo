@@ -6,75 +6,173 @@
     shell: /bin/bash
     state: present
 
-- name: Create application directory
+- name: Create application directories
   file:
-    path: "{{ processing_app_dir }}"
+    path: "{{ item }}"
     owner: "{{ processing_user }}"
     group: "{{ processing_user }}"
     mode: '0755'
     state: directory
+  loop:
+    - "{{ processing_app_dir }}"
+    - "{{ processing_app_dir }}/dags"
+    - "{{ processing_app_dir }}/pipeline"
+    - "{{ processing_app_dir }}/logs"
+    - "{{ airflow_home }}"
 
 - name: Install system packages for geospatial processing
-  yum:
-    name: "{{ item }}"
+  apt:
+    name: "{{ geo_packages }}"
     state: present
-  loop: "{{ geo_packages }}"
 
-- name: Upgrade pip
+- name: Create virtual environment with Python 3.12
+  shell: python3.12 -m venv {{ processing_app_dir }}/venv
+  args:
+    creates: "{{ processing_app_dir }}/venv"
+  become_user: "{{ processing_user }}"
+
+- name: Upgrade pip in venv
   pip:
     name: pip
     state: latest
-    executable: pip3
-
-- name: Create virtual environment
-  shell: |
-    python3 -m venv {{ processing_app_dir }}/venv
-    chown -R {{ processing_user }}:{{ processing_user }} {{ processing_app_dir }}/venv
-  args:
-    creates: "{{ processing_app_dir }}/venv"
-
-- name: Install Python packages for processing
-  pip:
-    name: "{{ item }}"
-    state: present
     virtualenv: "{{ processing_app_dir }}/venv"
-    virtualenv_command: python3 -m venv
-  loop: "{{ processing_pip_packages }}"
-  become: yes
   become_user: "{{ processing_user }}"
 
-- name: Create .env file for processing VM
+- name: Install pipeline Python packages
+  pip:
+    name: "{{ processing_pip_packages }}"
+    state: present
+    virtualenv: "{{ processing_app_dir }}/venv"
+  become_user: "{{ processing_user }}"
+
+- name: Install Apache Airflow
+  pip:
+    name: "{{ airflow_pip_packages }}"
+    state: present
+    virtualenv: "{{ processing_app_dir }}/venv"
+  become_user: "{{ processing_user }}"
+
+- name: Create Airflow environment file
   copy:
     content: |
+      AIRFLOW_HOME={{ airflow_home }}
+      AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://{{ rds_user }}:{{ rds_password }}@{{ rds_host }}:{{ rds_port }}/{{ rds_database }}
+      AIRFLOW__CORE__FERNET_KEY={{ airflow_fernet_key }}
+      AIRFLOW__WEBSERVER__SECRET_KEY={{ airflow_secret_key }}
+      AIRFLOW__CORE__DAGS_FOLDER={{ processing_app_dir }}/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES=false
+      AIRFLOW__SCHEDULER__MAX_DAGRUNS_TO_CREATE_PER_LOOP=10
+      AIRFLOW__SCHEDULER__CLEAN_TIS_WITHOUT_DAGRUN=true
+      AIRFLOW__DB__MAX_DB_RETRIES=3
+      AIRFLOW__METRICS__STATSD_ON=true
+      AIRFLOW__METRICS__STATSD_HOST={{ statsd_host | default('localhost') }}
+      AIRFLOW__METRICS__STATSD_PORT={{ statsd_port | default(9125) }}
+      AIRFLOW__METRICS__STATSD_PREFIX=airflow
+      AWS_ACCESS_KEY_ID={{ aws_access_key_id | default('') }}
+      AWS_SECRET_ACCESS_KEY={{ aws_secret_access_key | default('') }}
       AWS_S3_BRONZE_BUCKET={{ aws_s3_bronze_bucket }}
       AWS_S3_SILVER_BUCKET={{ aws_s3_silver_bucket }}
       AWS_S3_GOLD_BUCKET={{ aws_s3_gold_bucket }}
+      AWS_S3_REGION_NAME={{ aws_region }}
       RDS_HOST={{ rds_host }}
       RDS_PORT={{ rds_port }}
-      RDS_DATABASE={{ rds_database }}
+      RDS_NAME={{ rds_database }}
       RDS_USER={{ rds_user }}
       RDS_PASSWORD={{ rds_password }}
+      PYTHONPATH={{ processing_app_dir }}/pipeline
+      LOG_FILE={{ processing_app_dir }}/logs/pipeline.log
+      LOCAL_BRONZE_PATH=/tmp/bronze
+      LOCAL_SILVER_PATH=/tmp/silver
+      LOCAL_GOLD_PATH=/tmp/gold
     dest: "{{ processing_app_dir }}/.env"
     owner: "{{ processing_user }}"
     group: "{{ processing_user }}"
     mode: '0600'
 
-- name: Create pipeline runner script
+- name: Copy pipeline ETL
   copy:
-    src: run_pipeline.sh
-    dest: "{{ processing_app_dir }}/run_pipeline.sh"
+    src: "{{ playbook_dir }}/../pipeline/etl/"
+    dest: "{{ processing_app_dir }}/pipeline/etl/"
     owner: "{{ processing_user }}"
     group: "{{ processing_user }}"
-    mode: '0755'
+    mode: '0644'
 
-- name: Schedule pipeline execution via crontab
-  cron:
-    name: "Execute esteira-geo pipeline"
-    minute: "{{ (pipeline_schedule.split(' ')[0]) }}"
-    hour: "{{ (pipeline_schedule.split(' ')[1]) }}"
-    day: "{{ (pipeline_schedule.split(' ')[2]) }}"
-    month: "{{ (pipeline_schedule.split(' ')[3]) }}"
-    weekday: "{{ (pipeline_schedule.split(' ')[4]) }}"
-    job: "{{ processing_app_dir }}/run_pipeline.sh"
-    user: "{{ processing_user }}"
-    state: present
+- name: Copy pipeline config
+  copy:
+    src: "{{ playbook_dir }}/../pipeline/config.py"
+    dest: "{{ processing_app_dir }}/pipeline/config.py"
+    owner: "{{ processing_user }}"
+    group: "{{ processing_user }}"
+    mode: '0644'
+
+- name: Ensure pipeline __init__.py exists
+  file:
+    path: "{{ processing_app_dir }}/pipeline/__init__.py"
+    state: touch
+    owner: "{{ processing_user }}"
+    group: "{{ processing_user }}"
+    mode: '0644'
+
+- name: Copy Airflow DAGs
+  copy:
+    src: "{{ playbook_dir }}/../airflow/dags/"
+    dest: "{{ processing_app_dir }}/dags/"
+    owner: "{{ processing_user }}"
+    group: "{{ processing_user }}"
+    mode: '0644'
+
+- name: Initialize Airflow database
+  shell: |
+    source {{ processing_app_dir }}/venv/bin/activate
+    set -a && source {{ processing_app_dir }}/.env && set +a
+    airflow db migrate
+  args:
+    executable: /bin/bash
+  become_user: "{{ processing_user }}"
+
+- name: Create Airflow admin user
+  shell: |
+    source {{ processing_app_dir }}/venv/bin/activate
+    set -a && source {{ processing_app_dir }}/.env && set +a
+    airflow users create \
+      --username {{ airflow_admin_user }} \
+      --password {{ airflow_admin_password }} \
+      --firstname Admin --lastname User \
+      --role Admin \
+      --email admin@esteira-geo.local || true
+  args:
+    executable: /bin/bash
+  become_user: "{{ processing_user }}"
+
+- name: Create systemd service for Airflow scheduler
+  template:
+    src: airflow-scheduler.service.j2
+    dest: /etc/systemd/system/airflow-scheduler.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create systemd service for Airflow webserver
+  template:
+    src: airflow-webserver.service.j2
+    dest: /etc/systemd/system/airflow-webserver.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Reload systemd and enable Airflow services
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start Airflow scheduler
+  systemd:
+    name: airflow-scheduler
+    state: started
+    enabled: yes
+
+- name: Enable and start Airflow webserver
+  systemd:
+    name: airflow-webserver
+    state: started
+    enabled: yes

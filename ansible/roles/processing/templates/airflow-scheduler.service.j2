@@ -1,0 +1,19 @@
+[Unit]
+Description=Airflow Scheduler — Esteira Geo
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User={{ processing_user }}
+Group={{ processing_user }}
+WorkingDirectory={{ processing_app_dir }}
+EnvironmentFile={{ processing_app_dir }}/.env
+ExecStart={{ processing_app_dir }}/venv/bin/airflow scheduler
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=airflow-scheduler
+
+[Install]
+WantedBy=multi-user.target

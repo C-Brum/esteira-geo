@@ -1,6 +1,6 @@
 # Variáveis globais para todas as VMs
 ---
-python_version: "3.9"
+python_version: "3.12"
 system_packages:
   - git
   - wget
@@ -8,3 +8,4 @@ system_packages:
   - htop
   - nano
   - jq
+  - unzip

@@ -1,33 +1,34 @@
 ---
-- name: Update system packages
-  yum:
-    name: "{{ item }}"
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install system packages
+  apt:
+    name: "{{ system_packages | default([]) }}"
     state: present
-  loop: "{{ system_packages | default([]) }}"
 
-- name: Upgrade all packages
-  yum:
-    name: "*"
-    state: latest
+- name: Install Python 3.12 and build tools
+  apt:
+    name:
+      - python3.12
+      - python3.12-venv
+      - python3.12-dev
+      - python3-pip
+      - gcc
+      - g++
+      - make
+      - curl
+      - git
+      - wget
+      - htop
+      - jq
+    state: present
 
-- name: Install Python {{ python_version }}
-  shell: |
-    amazon-linux-extras install -y python{{ python_version }}
-  args:
-    creates: /usr/bin/python{{ python_version }}
-
-- name: Set Python3 as default alternative
+- name: Set python3 to point to python3.12
   alternatives:
     name: python3
     link: /usr/bin/python3
-    path: /usr/bin/python{{ python_version }}
-
-- name: Install system dependencies
-  yum:
-    name: "{{ item }}"
-    state: present
-  loop:
-    - python3-devel
-    - gcc
-    - gcc-c++
-    - make
+    path: /usr/bin/python3.12
+    priority: 100

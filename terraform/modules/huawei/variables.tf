@@ -29,12 +29,18 @@ variable "db_instance_class" {
 
 variable "db_username" {
   type    = string
-  default = "postgres"
+  default = "esteira_user"
 }
 
 variable "db_password" {
+  type      = string
+  default   = "esteira_pass"
+  sensitive = true
+}
+
+variable "db_name" {
   type    = string
-  default = "postgrespw"
+  default = "esteira_geo"
 }
 
 variable "ssh_public_key" {

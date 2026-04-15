@@ -1,32 +1,46 @@
-# Variáveis específicas para VM de processamento
 ---
 processing_user: esteira
 processing_home: /home/esteira
 processing_app_dir: "{{ processing_home }}/esteira-geo"
+airflow_home: "{{ processing_home }}/airflow"
 
-# Dependências geoespaciais
+# Dependências geoespaciais do sistema
 geo_packages:
-  - python3-dev
-  - python3-pip
-  - python3-venv
   - gdal-bin
   - libgdal-dev
   - libgeos-dev
   - libproj-dev
+  - libffi-dev
   - postgresql-client
+  - python3.12-dev
+  - python3.12-venv
 
-# Pacotes Python para processamento
+# Pacotes Python do pipeline
 processing_pip_packages:
-  - geopandas
-  - rasterio
-  - fiona
-  - shapely
-  - pyproj
-  - psycopg2-binary
-  - boto3
-  - python-dotenv
-  - pandas
-  - numpy
+  - geopandas>=0.13.0
+  - shapely>=2.0.0
+  - pyproj>=3.4.0
+  - fiona>=1.9.0
+  - rasterio>=1.3.0
+  - psycopg2-binary>=2.9.0
+  - boto3>=1.28.0
+  - python-dotenv>=1.0.0
+  - pandas>=2.0.0
+  - numpy>=1.24.0
+  - pyarrow>=12.0.0
+  - fastparquet>=2023.0.0
 
-# Schedule para executar pipeline (crontab)
-pipeline_schedule: "0 2 * * *"  # Executa diariamente às 2:00 AM
+# Pacotes Airflow
+airflow_pip_packages:
+  - "apache-airflow[postgres]==2.9.1"
+  - apache-airflow-providers-amazon>=8.0.0
+
+# Credenciais Airflow — sobrescrever via Ansible Vault ou inventory
+# ansible-vault encrypt_string '<valor>' --name airflow_fernet_key
+airflow_admin_user: admin
+airflow_admin_password: "changeme"
+airflow_fernet_key: "{{ vault_airflow_fernet_key | default('46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLt0nIe3aI=') }}"
+airflow_secret_key: "{{ vault_airflow_secret_key | default('esteira-geo-secret') }}"
+
+# Região AWS/OBS
+aws_region: "sa-brazil-1"

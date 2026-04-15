@@ -1,6 +1,6 @@
-# Look up Ubuntu 20.04 LTS image on Huawei Cloud
+# Ubuntu 22.04 LTS — compatível com Ansible (apt + python3.12 nativo)
 data "huaweicloud_images_image" "ubuntu" {
-  name        = "Ubuntu 20.04 server 64bit"
+  name        = "Ubuntu 22.04 server 64bit"
   most_recent = true
 }
 
