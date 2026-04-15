@@ -8,46 +8,169 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        :root {
+            --surface: #ffffff;
+            --bg:      #f6f8fa;
+            --border:  #d0d7de;
+            --text:    #1f2328;
+            --muted:   #656d76;
+            --accent:  #0969da;
+            --red:     #cf222e;
+            --green:   #1a7f37;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; }
+        body { font-family: 'Inter', sans-serif; }
         #map { width: 100vw; height: 100vh; }
-        #controls {
-            position: absolute; top: 10px; left: 50px; z-index: 1000;
-            background: white; border-radius: 8px; padding: 12px 16px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+
+        /* ── HUD ── */
+        #hud {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 20px;
+            display: none;
+            align-items: center;
+            gap: 18px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            white-space: nowrap;
         }
-        #controls strong { font-size: 13px; color: #333; }
-        .badge {
-            padding: 3px 10px; border-radius: 12px; font-size: 12px;
-            font-weight: 600; color: white;
+        .hud-title {
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent);
         }
-        .badge-total    { background: #667eea; }
-        .badge-affected { background: #f5576c; }
-        .badge-safe     { background: #4facfe; }
+        .hud-divider { width: 1px; height: 20px; background: var(--border); }
+        .hud-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .hud-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .hud-stat .val {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        /* ── Loading ── */
         #loading {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-            z-index: 2000; background: white; padding: 20px 32px; border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-size: 15px; color: #333;
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 2000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 24px 36px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
         }
+        .spinner {
+            width: 26px; height: 26px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading p { font-size: 13px; color: var(--muted); }
+
+        /* ── Back ── */
         #back {
-            position: absolute; bottom: 20px; left: 10px; z-index: 1000;
-            background: white; border-radius: 6px; padding: 8px 14px;
-            text-decoration: none; font-size: 13px; color: #333;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            position: absolute;
+            bottom: 24px;
+            left: 12px;
+            z-index: 1000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 14px;
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.12s;
         }
-        #back:hover { background: #f0f0f0; }
+        #back:hover { color: var(--accent); border-color: var(--accent); }
+
+        /* ── Leaflet overrides ── */
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+            border: 1px solid var(--border) !important;
+        }
+        .leaflet-popup-content {
+            font-family: 'Inter', sans-serif !important;
+            font-size: 13px !important;
+            line-height: 1.6 !important;
+            color: var(--text) !important;
+        }
+        .leaflet-control-layers {
+            border-radius: 8px !important;
+            border: 1px solid var(--border) !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+        }
+        .leaflet-control-layers label {
+            font-family: 'Inter', sans-serif !important;
+            font-size: 13px !important;
+        }
+        .marker-cluster-small,
+        .marker-cluster-medium,
+        .marker-cluster-large {
+            background-color: rgba(9, 105, 218, 0.15) !important;
+        }
+        .marker-cluster-small div,
+        .marker-cluster-medium div,
+        .marker-cluster-large div {
+            background-color: rgba(9, 105, 218, 0.7) !important;
+            color: white !important;
+            font-family: 'JetBrains Mono', monospace !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+        }
     </style>
 </head>
 <body>
-<div id="loading">⏳ Carregando dados...</div>
-<div id="map"></div>
-<div id="controls" style="display:none">
-    <strong>{{ use_case }}</strong>
-    <span class="badge badge-total"   id="b-total">—</span>
-    <span class="badge badge-affected" id="b-affected">—</span>
-    <span class="badge badge-safe"    id="b-safe">—</span>
+
+<div id="loading">
+    <div class="spinner"></div>
+    <p>Carregando dados geoespaciais...</p>
 </div>
+
+<div id="map"></div>
+
+<div id="hud">
+    <span class="hud-title">{{ use_case }}</span>
+    <div class="hud-divider"></div>
+    <div class="hud-stat">
+        <div class="hud-dot" style="background:#0969da"></div>
+        <span class="val" id="b-total">—</span> total
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-stat">
+        <div class="hud-dot" style="background:#cf222e"></div>
+        <span class="val" id="b-affected">—</span> afetados
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-stat">
+        <div class="hud-dot" style="background:#1a7f37"></div>
+        <span class="val" id="b-safe">—</span> seguros
+    </div>
+</div>
+
 <a href="/?use_case={{ use_case }}" id="back">← Dashboard</a>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -56,19 +179,20 @@
 const USE_CASE = "{{ use_case }}";
 
 const map = L.map('map').setView([-15.78, -47.93], 4);
+
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap', maxZoom: 19
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19
 }).addTo(map);
 
-// Camadas
-const floodLayer    = L.layerGroup().addTo(map);
+const floodLayer        = L.layerGroup().addTo(map);
 const affectedCluster   = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 }).addTo(map);
 const unaffectedCluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 }).addTo(map);
 
 L.control.layers({}, {
-    '🔴 Afetados':        affectedCluster,
-    '🔵 Não Afetados':    unaffectedCluster,
-    '🟢 Áreas de Enchente': floodLayer,
+    '🔴 Afetados':       affectedCluster,
+    '🟢 Não Afetados':   unaffectedCluster,
+    '🟠 Áreas de Risco': floodLayer,
 }, { collapsed: false }).addTo(map);
 
 fetch(`/api/geojson?use_case=${USE_CASE}`)
@@ -86,7 +210,7 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
                 total++;
                 const lat = coords[1], lon = coords[0];
                 bounds.push([lat, lon]);
-                const color = p.affected ? '#f5576c' : '#4facfe';
+                const color = p.affected ? '#cf222e' : '#1a7f37';
                 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="24" viewBox="0 0 20 24">
                     <circle cx="10" cy="5" r="4" fill="${color}"/>
                     <path d="M2 20 Q2 12 10 12 Q18 12 18 20" fill="${color}"/>
@@ -99,20 +223,31 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
                     iconAnchor: [10, 24],
                     popupAnchor: [0, -24]
                 });
+                const statusLabel = p.affected
+                    ? `<span style="color:#cf222e;font-weight:600">● AFETADO</span>`
+                    : `<span style="color:#1a7f37;font-weight:600">● SEGURO</span>`;
                 const marker = L.marker([lat, lon], { icon }).bindPopup(
-                    `<b>${p.name}</b><br>ID: ${p.id}<br>${p.address}<br>
-                     <span style="color:${color};font-weight:600">
-                     ${p.affected ? '🔴 AFETADO' : '🔵 SEGURO'}</span>`
+                    `<b style="font-size:14px">${p.name || '—'}</b><br>
+                     <span style="color:#656d76;font-size:11px;font-family:monospace">ID: ${p.id}</span><br>
+                     ${p.address || ''}<br><br>${statusLabel}`
                 );
                 if (p.affected) { affected++; affectedCluster.addLayer(marker); }
                 else            { safe++;     unaffectedCluster.addLayer(marker); }
 
             } else if (p.type === 'flood_area') {
                 const poly = L.geoJSON(f, {
-                    style: { color: '#2d6a4f', weight: 2, fillColor: '#52b788', fillOpacity: 0.35 }
-                }).bindPopup(`<b>${p.name}</b><br>Data: ${p.date || '—'}<br>Severidade: ${p.severity}`);
+                    style: {
+                        color: '#bc4c00',
+                        weight: 2,
+                        fillColor: '#fb8f44',
+                        fillOpacity: 0.18
+                    }
+                }).bindPopup(
+                    `<b style="font-size:14px">${p.name}</b><br>
+                     <span style="color:#656d76;font-size:11px">Data: ${p.date || '—'}</span><br>
+                     Severidade: <b>${p.severity || '—'}</b>`
+                );
                 floodLayer.addLayer(poly);
-                // Extrair bounds diretamente das coordenadas GeoJSON
                 const rings = f.geometry.type === 'Polygon'
                     ? f.geometry.coordinates
                     : f.geometry.coordinates.flat();
@@ -120,20 +255,19 @@ fetch(`/api/geojson?use_case=${USE_CASE}`)
             }
         });
 
-        // Atualizar badges
-        document.getElementById('b-total').textContent    = `Total: ${total}`;
-        document.getElementById('b-affected').textContent = `Afetados: ${affected}`;
-        document.getElementById('b-safe').textContent     = `Seguros: ${safe}`;
-        document.getElementById('controls').style.display = 'flex';
+        document.getElementById('b-total').textContent    = total;
+        document.getElementById('b-affected').textContent = affected;
+        document.getElementById('b-safe').textContent     = safe;
+        document.getElementById('hud').style.display      = 'flex';
         document.getElementById('loading').style.display  = 'none';
 
-        // Centralizar: cidadãos têm prioridade; fallback para áreas
-        if (bounds.length)      map.fitBounds(bounds, { padding: [30, 30] });
-        else if (areaBounds.length) map.fitBounds(areaBounds, { padding: [40, 40] });
-        else                    map.setView([-15.78, -47.93], 4); // Brasil
+        if (bounds.length)          map.fitBounds(bounds,     { padding: [40, 40] });
+        else if (areaBounds.length) map.fitBounds(areaBounds, { padding: [60, 60] });
+        else                        map.setView([-15.78, -47.93], 4);
     })
     .catch(e => {
-        document.getElementById('loading').textContent = '❌ Erro ao carregar dados: ' + e.message;
+        document.getElementById('loading').innerHTML =
+            `<p style="color:#cf222e;font-size:13px">❌ Erro: ${e.message}</p>`;
     });
 </script>
 </body>

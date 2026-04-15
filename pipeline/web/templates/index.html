@@ -3,181 +3,534 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Esteira Geo - Dashboard</title>
+    <title>Esteira Geo — {{ use_case or 'Dashboard' }}</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        :root {
+            --bg:       #f6f8fa;
+            --surface:  #ffffff;
+            --border:   #d0d7de;
+            --border2:  #e8ecf0;
+            --text:     #1f2328;
+            --muted:    #656d76;
+            --accent:   #0969da;
+            --accent-bg:#dbeafe;
+            --red:      #cf222e;
+            --red-bg:   #ffebe9;
+            --green:    #1a7f37;
+            --green-bg: #dafbe1;
+            --yellow:   #9a6700;
+            --yellow-bg:#fff8c5;
+            --purple:   #6639ba;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 1200px;
-            width: 100%;
-            padding: 40px;
-        }
-        h1 { color: #333; margin-bottom: 10px; text-align: center; font-size: 32px; }
-        .subtitle { color: #666; text-align: center; margin-bottom: 20px; font-size: 16px; }
-        .use-case-bar {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: #f5f5f5;
-            border-radius: 8px;
-            padding: 12px 20px;
-            margin-bottom: 30px;
-        }
-        .use-case-bar label { font-weight: 600; color: #444; white-space: nowrap; }
-        .use-case-bar select {
-            flex: 1;
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
             font-size: 14px;
-            background: white;
+            line-height: 1.5;
         }
-        .use-case-bar .badge {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 4px 12px;
+
+        /* ── Top bar ── */
+        .topbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .topbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #1a7f37;
+            box-shadow: 0 0 0 2px #dafbe1;
+            animation: pulse 2.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 2px #dafbe1; }
+            50%       { box-shadow: 0 0 0 4px #dafbe1; }
+        }
+        .topbar-pills {
+            display: flex;
+            gap: 8px;
+        }
+        .pill {
+            background: var(--bg);
+            border: 1px solid var(--border);
             border-radius: 20px;
+            padding: 3px 12px;
             font-size: 12px;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* ── Layout ── */
+        .layout {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            min-height: calc(100vh - 52px - 40px);
+        }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 20px 0;
+        }
+        .sidebar-section { margin-bottom: 20px; }
+        .sidebar-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            color: var(--muted);
+            padding: 0 16px;
+            margin-bottom: 6px;
+        }
+        .sidebar-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 16px;
+            font-size: 13px;
+            color: var(--muted);
+            text-decoration: none;
+            transition: all 0.12s;
+            border-left: 2px solid transparent;
+        }
+        .sidebar-item:hover {
+            background: var(--bg);
+            color: var(--text);
+        }
+        .sidebar-item.active {
+            background: var(--accent-bg);
+            color: var(--accent);
+            border-left-color: var(--accent);
+            font-weight: 500;
+        }
+        .divider {
+            height: 1px;
+            background: var(--border2);
+            margin: 8px 16px;
+        }
+        .use-case-select {
+            width: calc(100% - 32px);
+            margin: 0 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            font-family: 'JetBrains Mono', monospace;
+            padding: 7px 10px;
+            cursor: pointer;
+            outline: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23656d76' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-color: var(--surface);
+        }
+        .use-case-select:focus { border-color: var(--accent); }
+
+        /* ── Main ── */
+        .main { padding: 28px 32px; }
+
+        .page-header { margin-bottom: 24px; }
+        .breadcrumb {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+        .breadcrumb span { color: var(--accent); }
+        .page-header h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+        .page-header p  { font-size: 13px; color: var(--muted); }
+
+        /* ── KPI cards ── */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+        .kpi-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        .kpi-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            border-radius: 8px 8px 0 0;
+        }
+        .kpi-card.total::after   { background: var(--accent); }
+        .kpi-card.affected::after { background: var(--red); }
+        .kpi-card.safe::after    { background: var(--green); }
+        .kpi-card.pct::after     { background: var(--yellow); }
+
+        .kpi-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+        .kpi-value {
+            font-size: 30px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+        .kpi-card.total   .kpi-value { color: var(--accent); }
+        .kpi-card.affected .kpi-value { color: var(--red); }
+        .kpi-card.safe    .kpi-value { color: var(--green); }
+        .kpi-card.pct     .kpi-value { color: var(--yellow); }
+        .kpi-sub { font-size: 12px; color: var(--muted); }
+
+        /* ── Progress ── */
+        .progress-section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px 20px;
+            margin-bottom: 24px;
+        }
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .progress-title { font-size: 13px; font-weight: 500; }
+        .progress-pct   { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--red); font-weight: 600; }
+        .progress-bar   { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; border: 1px solid var(--border2); }
+        .progress-fill  { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--red), #ff6b6b); transition: width 0.8s ease; }
+        .progress-legend { display: flex; gap: 20px; margin-top: 10px; }
+        .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+        .legend-dot  { width: 8px; height: 8px; border-radius: 50%; }
+
+        /* ── Actions ── */
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+        .action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            transition: all 0.12s;
             white-space: nowrap;
         }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+        .action-btn:hover { background: var(--bg); border-color: var(--accent); color: var(--accent); }
+        .action-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
         }
-        .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 8px;
-            text-align: center;
-        }
-        .stat-card h3 { font-size: 14px; opacity: 0.9; margin-bottom: 10px; font-weight: 500; }
-        .stat-card .number { font-size: 36px; font-weight: bold; }
-        .stat-card.affected   { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
-        .stat-card.unaffected { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
-        .buttons {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-        .btn {
-            display: inline-block;
-            padding: 15px 30px;
-            border-radius: 8px;
-            text-decoration: none;
+        .action-btn.primary:hover { background: #0860ca; border-color: #0860ca; color: #fff; }
+
+        /* ── Grid 2 cols ── */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+
+        /* ── Panel ── */
+        .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .panel-header {
+            padding: 12px 18px;
+            border-bottom: 1px solid var(--border2);
+            font-size: 13px;
             font-weight: 600;
-            text-align: center;
-            transition: all 0.3s ease;
-            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg);
         }
-        .btn-primary  { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-        .btn-success  { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: #333; }
-        .btn-info     { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #333; }
-        .btn:hover    { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.15); }
-        .error   { background: #fee; border: 1px solid #f99; color: #c33; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .success { background: #efe; border: 1px solid #9f9; color: #333; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .section { margin-bottom: 30px; }
-        .section h2 { color: #333; font-size: 20px; margin-bottom: 15px; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
-        .table { width: 100%; border-collapse: collapse; }
-        .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        .table th { font-weight: 600; background: #f5f5f5; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
+
+        /* ── Tables ── */
+        .data-table { width: 100%; border-collapse: collapse; }
+        .data-table tr { border-bottom: 1px solid var(--border2); }
+        .data-table tr:last-child { border-bottom: none; }
+        .data-table td { padding: 9px 18px; font-size: 13px; }
+        .data-table td:first-child { color: var(--muted); width: 42%; }
+        .data-table td:last-child  { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+        .api-table { width: 100%; border-collapse: collapse; }
+        .api-table tr { border-bottom: 1px solid var(--border2); }
+        .api-table tr:last-child { border-bottom: none; }
+        .api-table td { padding: 9px 18px; font-size: 12px; }
+        .api-table td:first-child { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+        .api-table td:nth-child(2) { color: var(--muted); }
+        .api-table td:last-child   { color: var(--muted); font-size: 11px; }
+
+        /* ── Tags ── */
+        .tag {
+            display: inline-block;
+            border-radius: 4px;
+            padding: 1px 7px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            border: 1px solid;
+            margin-right: 4px;
+        }
+        .tag.blue   { color: var(--accent); background: var(--accent-bg); border-color: #b6d4fe; }
+        .tag.green  { color: var(--green);  background: var(--green-bg);  border-color: #aceebb; }
+        .tag.red    { color: var(--red);    background: var(--red-bg);    border-color: #ffb8b5; }
+
+        /* ── State boxes ── */
+        .state-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 48px;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .state-box .icon { font-size: 36px; margin-bottom: 14px; }
+        .state-box h3    { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+        .state-box p     { font-size: 13px; color: var(--muted); }
+        .state-box.error { border-color: #ffb8b5; background: var(--red-bg); }
+        .state-box.error h3 { color: var(--red); }
+
+        /* ── Footer ── */
+        .footer {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 10px 24px;
+            font-size: 11px;
+            color: var(--muted);
+            display: flex;
+            justify-content: space-between;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        @media (max-width: 768px) {
+            .layout { grid-template-columns: 1fr; }
+            .sidebar { display: none; }
+            .grid-2 { grid-template-columns: 1fr; }
+            .main { padding: 16px; }
+        }
     </style>
 </head>
 <body>
-<div class="container">
-    <h1>🌍 Esteira Geo - Dashboard</h1>
-    <p class="subtitle">Pipeline Geográfico | Arquitetura Medallion</p>
 
-    <!-- Seletor de caso de uso -->
-    <div class="use-case-bar">
-        <label>📂 Caso de Uso:</label>
-        <select onchange="window.location='/?use_case='+this.value">
-            {% for uc in use_cases %}
-            <option value="{{ uc }}" {% if uc == use_case %}selected{% endif %}>{{ uc }}</option>
-            {% endfor %}
-            {% if not use_cases %}
-            <option value="{{ use_case }}" selected>{{ use_case }}</option>
-            {% endif %}
-        </select>
-        <span class="badge">{{ use_case }}</span>
+<header class="topbar">
+    <div class="topbar-brand">
+        <span class="status-dot"></span>
+        Esteira Geo
     </div>
-
-    {% if error %}
-        <div class="error">❌ Erro: {{ error }}</div>
-    {% elif stats %}
-        <div class="success">✅ Dados carregados — caso de uso: <strong>{{ use_case }}</strong></div>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h3>Total de Cidadãos</h3>
-                <div class="number">{{ stats.total or 0 }}</div>
-            </div>
-            <div class="stat-card affected">
-                <h3>Cidadãos Afetados</h3>
-                <div class="number">{{ stats.affected or 0 }}</div>
-            </div>
-            <div class="stat-card unaffected">
-                <h3>Não Afetados</h3>
-                <div class="number">{{ stats.unaffected or 0 }}</div>
-            </div>
-        </div>
-
-        <div class="buttons">
-            <a href="/map?use_case={{ use_case }}"        class="btn btn-success">🗺️ Mapa Interativo</a>
-            <a href="/api/geojson?use_case={{ use_case }}" class="btn btn-info">📊 GeoJSON</a>
-            <a href="/api/stats?use_case={{ use_case }}"   class="btn btn-primary">📈 API Stats</a>
-            <a href="/api/use_cases"                        class="btn btn-primary">📂 Casos de Uso</a>
-        </div>
-
-        <div class="section">
-            <h2>📊 Status do Pipeline</h2>
-            <table class="table">
-                <tr><td><strong>Caso de Uso</strong></td><td>{{ use_case }}</td></tr>
-                <tr><td><strong>Tabelas PostGIS</strong></td><td>{{ use_case }}_citizens | {{ use_case }}_flooding_areas</td></tr>
-                <tr><td><strong>Banco de Dados</strong></td><td>✅ PostgreSQL + PostGIS Online</td></tr>
-                <tr><td><strong>Última Atualização</strong></td><td>{{ last_update }}</td></tr>
-                <tr><td><strong>Registros</strong></td><td>{{ stats.total or 0 }} cidadãos</td></tr>
-                <tr><td><strong>Camadas</strong></td><td>Bronze ✓ | Silver ✓ | Gold ✓</td></tr>
-            </table>
-        </div>
-
-        <div class="section">
-            <h2>🔗 APIs Disponíveis</h2>
-            <table class="table">
-                <thead><tr><th>Endpoint</th><th>Descrição</th><th>Formato</th></tr></thead>
-                <tbody>
-                    <tr><td><code>/?use_case=&lt;uc&gt;</code></td><td>Dashboard do caso de uso</td><td>HTML</td></tr>
-                    <tr><td><code>/map?use_case=&lt;uc&gt;</code></td><td>Mapa interativo (Folium)</td><td>HTML</td></tr>
-                    <tr><td><code>/api/stats?use_case=&lt;uc&gt;</code></td><td>Estatísticas</td><td>JSON</td></tr>
-                    <tr><td><code>/api/geojson?use_case=&lt;uc&gt;</code></td><td>Dados completos</td><td>GeoJSON</td></tr>
-                    <tr><td><code>/api/use_cases</code></td><td>Lista casos de uso disponíveis</td><td>JSON</td></tr>
-                    <tr><td><code>/health</code></td><td>Health check</td><td>JSON</td></tr>
-                </tbody>
-            </table>
-        </div>
-    {% else %}
-        <div class="success">⏳ Carregando dados...</div>
-    {% endif %}
-
-    <div class="footer">
-        <p>Esteira Geo | Arquitetura Medallion (Bronze → Silver → Gold) | Caso de uso: {{ use_case }}</p>
+    <div class="topbar-pills">
+        <span class="pill">Medallion</span>
+        <span class="pill">Bronze → Silver → Gold</span>
     </div>
+</header>
+
+<div class="layout">
+
+    <aside class="sidebar">
+        <div class="sidebar-section">
+            <div class="sidebar-label">Use Case</div>
+            <select class="use-case-select" onchange="window.location='/?use_case='+this.value">
+                {% for uc in use_cases %}
+                <option value="{{ uc }}" {% if uc == use_case %}selected{% endif %}>{{ uc }}</option>
+                {% endfor %}
+                {% if not use_cases %}
+                <option value="{{ use_case }}" selected>{{ use_case or '—' }}</option>
+                {% endif %}
+            </select>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-label">Navegação</div>
+            <a class="sidebar-item active" href="/?use_case={{ use_case }}">📊 Dashboard</a>
+            <a class="sidebar-item" href="/map?use_case={{ use_case }}">🗺 Mapa</a>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-label">APIs</div>
+            <a class="sidebar-item" href="/api/stats?use_case={{ use_case }}" target="_blank">📈 /api/stats</a>
+            <a class="sidebar-item" href="/api/geojson?use_case={{ use_case }}" target="_blank">📦 /api/geojson</a>
+            <a class="sidebar-item" href="/api/use_cases" target="_blank">📂 /api/use_cases</a>
+            <a class="sidebar-item" href="/health" target="_blank">💚 /health</a>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="sidebar-section">
+            <div class="sidebar-label">Pipeline</div>
+            <div class="sidebar-item">🟤 Bronze</div>
+            <div class="sidebar-item">⚪ Silver</div>
+            <div class="sidebar-item">🟡 Gold</div>
+            <div class="sidebar-item">🗄 PostGIS</div>
+        </div>
+    </aside>
+
+    <main class="main">
+
+        <div class="page-header">
+            <div class="breadcrumb">esteira-geo / <span>{{ use_case or 'dashboard' }}</span></div>
+            <h1>Dashboard</h1>
+            <p>Batimento geoespacial — Arquitetura Medallion orquestrada pelo Airflow</p>
+        </div>
+
+        {% if error %}
+        <div class="state-box error">
+            <div class="icon">⚠️</div>
+            <h3>Erro ao carregar dados</h3>
+            <p>{{ error }}</p>
+        </div>
+
+        {% elif not use_cases %}
+        <div class="state-box">
+            <div class="icon">📭</div>
+            <h3>Nenhum dado disponível</h3>
+            <p>Deposite arquivos em <code>bronze/automatizado/&lt;use_case&gt;/</code> e aguarde o pipeline processar.</p>
+        </div>
+
+        {% elif stats %}
+
+        <div class="kpi-grid">
+            <div class="kpi-card total">
+                <div class="kpi-label">Total de Cidadãos</div>
+                <div class="kpi-value">{{ stats.total or 0 }}</div>
+                <div class="kpi-sub">registros avaliados</div>
+            </div>
+            <div class="kpi-card affected">
+                <div class="kpi-label">Afetados</div>
+                <div class="kpi-value">{{ stats.affected or 0 }}</div>
+                <div class="kpi-sub">em área de risco</div>
+            </div>
+            <div class="kpi-card safe">
+                <div class="kpi-label">Não Afetados</div>
+                <div class="kpi-value">{{ stats.unaffected or 0 }}</div>
+                <div class="kpi-sub">fora de área de risco</div>
+            </div>
+            <div class="kpi-card pct">
+                <div class="kpi-label">Taxa de Impacto</div>
+                <div class="kpi-value">
+                    {% if stats.total and stats.total > 0 %}
+                        {{ "%.1f"|format((stats.affected or 0) / stats.total * 100) }}%
+                    {% else %}—{% endif %}
+                </div>
+                <div class="kpi-sub">cidadãos afetados</div>
+            </div>
+        </div>
+
+        {% if stats.total and stats.total > 0 %}
+        <div class="progress-section">
+            <div class="progress-header">
+                <span class="progress-title">Distribuição de Impacto</span>
+                <span class="progress-pct">{{ "%.1f"|format((stats.affected or 0) / stats.total * 100) }}% afetados</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" style="width:{{ ((stats.affected or 0) / stats.total * 100)|round(1) }}%"></div>
+            </div>
+            <div class="progress-legend">
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--red)"></div>
+                    Afetados ({{ stats.affected or 0 }})
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background:var(--green)"></div>
+                    Não afetados ({{ stats.unaffected or 0 }})
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="actions">
+            <a href="/map?use_case={{ use_case }}" class="action-btn primary">🗺 Abrir Mapa</a>
+            <a href="/api/geojson?use_case={{ use_case }}" class="action-btn" target="_blank">📦 GeoJSON</a>
+            <a href="/api/stats?use_case={{ use_case }}" class="action-btn" target="_blank">📈 API Stats</a>
+            <a href="/api/use_cases" class="action-btn" target="_blank">📂 Use Cases</a>
+        </div>
+
+        <div class="grid-2">
+            <div class="panel">
+                <div class="panel-header">🗄 Status do Pipeline</div>
+                <table class="data-table">
+                    <tr><td>Use Case</td><td><span class="tag blue">{{ use_case }}</span></td></tr>
+                    <tr><td>Tabela cidadãos</td><td><span class="tag blue">{{ use_case }}_citizens</span></td></tr>
+                    <tr><td>Tabela áreas</td><td><span class="tag blue">{{ use_case }}_flooding_areas</span></td></tr>
+                    <tr><td>Banco de dados</td><td><span class="tag green">● online</span></td></tr>
+                    <tr><td>Última atualização</td><td>{{ last_update[:19] if last_update else '—' }}</td></tr>
+                    <tr><td>Camadas</td><td>
+                        <span class="tag green">Bronze</span>
+                        <span class="tag green">Silver</span>
+                        <span class="tag green">Gold</span>
+                    </td></tr>
+                </table>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">🔗 Endpoints disponíveis</div>
+                <table class="api-table">
+                    <tr><td>/api/stats</td><td>Estatísticas do use_case</td><td>JSON</td></tr>
+                    <tr><td>/api/geojson</td><td>Dados completos</td><td>GeoJSON</td></tr>
+                    <tr><td>/api/use_cases</td><td>Lista use_cases</td><td>JSON</td></tr>
+                    <tr><td>/map</td><td>Mapa interativo Leaflet</td><td>HTML</td></tr>
+                    <tr><td>/health</td><td>Health check</td><td>JSON</td></tr>
+                </table>
+            </div>
+        </div>
+
+        {% else %}
+        <div class="state-box">
+            <div class="icon">⏳</div>
+            <h3>Aguardando dados</h3>
+            <p>Deposite arquivos em <code>bronze/automatizado/{{ use_case }}/</code> e aguarde o pipeline processar.</p>
+        </div>
+        {% endif %}
+
+    </main>
 </div>
-<script>setTimeout(() => location.reload(), 30000);</script>
+
+<footer class="footer">
+    <span>esteira-geo · medallion pipeline · airflow orchestration</span>
+    <span id="clock"></span>
+</footer>
+
+<script>
+    function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+    tick(); setInterval(tick, 1000);
+    setTimeout(() => location.reload(), 30000);
+</script>
 </body>
 </html>
